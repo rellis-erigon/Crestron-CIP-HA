@@ -18,11 +18,11 @@ panel will be knocked offline while the bridge is connected.
 
 ```yaml
 processors:
-  - name: Tower
-    host: 192.168.33.14
+  - name: Main Hall
+    host: 192.0.2.10
     ipid: 16
-  - name: Orchard
-    host: 192.168.33.2
+  - name: Meeting Room
+    host: 192.0.2.11
     ipid: 16
 log_level: info
 ```

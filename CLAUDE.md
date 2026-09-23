@@ -76,10 +76,11 @@ button. Do not replace either with a periodic list refresh.
 
 ## Where things stand
 
-- CIP proven against all three processors: `192.168.33.1` (CP4, BGM, no
-  wired XPanel — IPID 4 registered but returned 0 joins), `192.168.33.2`
-  (DMPS, Function 1–2), `192.168.33.14` (DMPS, Function 3–4).
-- Real joins captured from both DMPS units, 11 each.
+- CIP proven against three processors on the development site: one CP4
+  running background music, which has no wired XPanel — IPID 4 registered but
+  returned 0 joins — and two DMPS3-4K-350-C units driving function rooms.
+- Real joins captured from both DMPS units, 11 each. That number is the
+  point: the programs have hundreds.
 - **Not yet verified live**: the add-on running as an add-on, against a real
   processor, end to end. It has been smoke-tested with a stubbed connection.
 - IPID 10 was added to the IP tables but there is still no XPanel at that
