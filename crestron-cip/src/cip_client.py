@@ -54,6 +54,10 @@ UPDATE_END_ACK = 0x1D
 REG_NOT_DEFINED = b"\xff\xff\x02"
 REG_SUCCESS = b"\x00\x00\x00\x1f"
 
+# A frame is [type][length:2 big-endian][payload]; a disconnect carries
+# nothing. Inferred from the framing, not captured — see close().
+DISCONNECT = bytes([TYPE_DISCONNECT, 0x00, 0x00])
+
 REQUEST_UPDATE = b"\x05\x00\x05\x00\x00\x02\x03\x00"
 END_OF_QUERY_ACK = b"\x05\x00\x05\x00\x00\x02\x03\x1d"
 HEARTBEAT = b"\x0d\x00\x02\x00\x00"
@@ -205,7 +209,25 @@ class CipConnection:
         logger.info("Connected to %s:%s as IPID 0x%02X",
                     self.host, self.port, self.ipid)
 
-    async def close(self) -> None:
+    async def close(self, say_goodbye: bool = True) -> None:
+        """Drop the connection, telling the processor first where possible.
+
+        A frame is [type][length:2][payload], so a disconnect with nothing to
+        say is three bytes. This is inferred from the framing rather than
+        captured from a real panel, which is why it is strictly best-effort:
+        it never raises and never delays shutdown by more than a moment.
+
+        Sending it matters because the alternative is that every restart
+        looks to the processor like a yanked cable, and at least one here
+        stopped accepting CIP after exactly that.
+        """
+        if say_goodbye and self.registered and self._writer is not None:
+            try:
+                self._writer.write(DISCONNECT)
+                await asyncio.wait_for(self._writer.drain(), timeout=2.0)
+            except (OSError, ConnectionError, asyncio.TimeoutError):
+                pass
+
         self.connected = self.registered = False
         if self._writer is not None:
             self._writer.close()

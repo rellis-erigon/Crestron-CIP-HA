@@ -83,6 +83,30 @@ button. Do not replace either with a periodic list refresh.
   attached. `JoinStore.observe()` is idempotent, so this costs nothing, but
   do not read a duplicate dump as a reconnection.
 
+## A processor can stop accepting CIP
+
+Observed on the CP4: it registered at IPID 4, held for about two and a half
+minutes, then refused TCP on 41794 from the moment the add-on container was
+killed for a version update — and kept refusing.
+
+How to tell what you are looking at, without guessing:
+
+| Symptom | Means |
+|---------|-------|
+| ICMP replies, 41794 refused, 22 open, 80/443 refused | The box is up and networked, but its program and web server are not running |
+| ICMP replies, everything refused | Processor is booting, or the program has stopped |
+| No ICMP | Powered off, or off the network |
+
+A refusal is not the same as a rejected registration. `ff ff 02` means the
+program has no device at that IPID; `ECONNREFUSED` means nothing is
+listening at all.
+
+Whether an unclean disconnect causes this is **not established**. The timing
+was suggestive, there was no prior baseline for that processor's web ports,
+and a program can stop for its own reasons. `close()` now sends a disconnect
+frame so the question stops arising, but do not record the causal claim as
+fact without evidence.
+
 ## Where things stand
 
 - CIP proven against three processors on the development site: one CP4

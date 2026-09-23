@@ -189,3 +189,71 @@ def test_reconnect_delay_never_drops_below_the_base():
 
     assert next_reconnect_delay(0.0, base=10.0) == 10.0
     assert next_reconnect_delay(1.0, base=10.0) == 10.0
+
+
+class _StubWriter:
+    """Minimal asyncio StreamWriter stand-in that records what was sent."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.sent = b""
+        self.closed = False
+        self._fail = fail
+
+    def write(self, data: bytes) -> None:
+        if self._fail:
+            raise ConnectionResetError("peer went away")
+        self.sent += data
+
+    async def drain(self) -> None:
+        if self._fail:
+            raise ConnectionResetError("peer went away")
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        pass
+
+
+async def test_close_tells_the_processor_before_dropping():
+    from cip_client import DISCONNECT, CipConnection
+
+    conn = CipConnection("192.0.2.10", 0x03, name="P")
+    writer = _StubWriter()
+    conn._writer = writer
+    conn.connected = conn.registered = True
+
+    await conn.close()
+
+    assert writer.sent == DISCONNECT
+    assert writer.closed
+    assert not conn.registered and not conn.connected
+
+
+async def test_close_on_a_broken_socket_still_closes():
+    """The disconnect is a courtesy; failing to send it must not raise."""
+    from cip_client import CipConnection
+
+    conn = CipConnection("192.0.2.10", 0x03, name="P")
+    writer = _StubWriter(fail=True)
+    conn._writer = writer
+    conn.connected = conn.registered = True
+
+    await conn.close()
+
+    assert writer.closed
+    assert not conn.registered
+
+
+async def test_close_sends_nothing_when_never_registered():
+    from cip_client import CipConnection
+
+    conn = CipConnection("192.0.2.10", 0x03, name="P")
+    writer = _StubWriter()
+    conn._writer = writer
+    conn.connected = True
+
+    await conn.close()
+
+    assert writer.sent == b""
+    assert writer.closed
