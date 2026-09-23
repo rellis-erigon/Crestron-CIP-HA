@@ -78,7 +78,7 @@ button. Do not replace either with a periodic list refresh.
 
 - CIP proven against three processors on the development site: one CP4
   running background music, which has no wired XPanel — IPID 4 registered but
-  returned 0 joins — and two DMPS3-4K-350-C units driving function rooms.
+  returned 0 joins — and two DMPS units driving function rooms.
 - Real joins captured from both DMPS units, 11 each. That number is the
   point: the programs have hundreds.
 - **Not yet verified live**: the add-on running as an add-on, against a real

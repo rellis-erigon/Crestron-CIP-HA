@@ -61,11 +61,11 @@ class FakeConnection:
 def hub(tmp_path):
     store = JoinStore(tmp_path / "joins.json")
     hub = Hub(store)
-    conn = FakeConnection("192.168.33.2", 0x10, "DMPS")
-    hub.connections["DMPS"] = conn
-    hub._on_join("DMPS", _join("d", 7, True))
-    hub._on_join("DMPS", _join("a", 1, 32768))
-    hub._on_join("DMPS", _join("s", 1, "Orchard Room 1"))
+    conn = FakeConnection("192.0.2.10", 0x10, "Processor")
+    hub.connections["Processor"] = conn
+    hub._on_join("Processor", _join("d", 7, True))
+    hub._on_join("Processor", _join("a", 1, 32768))
+    hub._on_join("Processor", _join("s", 1, "Main Hall"))
     return hub
 
 
@@ -94,7 +94,7 @@ async def test_status_counts_without_dumping_joins(client, hub):
     assert body["total_joins"] == 3
     assert body["exposed_joins"] == 0
     proc = body["processors"][0]
-    assert proc["name"] == "DMPS"
+    assert proc["name"] == "Processor"
     assert proc["stored_joins"] == 3
     # The status view must stay small even on a panel with hundreds of joins.
     assert proc["joins"] is None
@@ -112,7 +112,7 @@ async def test_list_joins_filters(client):
     only_digital = await (await client.get("/api/joins?signal=d")).json()
     assert [j["key"] for j in only_digital["joins"]] == ["d7"]
 
-    by_value = await (await client.get("/api/joins?search=orchard")).json()
+    by_value = await (await client.get("/api/joins?search=main hall")).json()
     assert [j["key"] for j in by_value["joins"]] == ["s1"]
 
     unknown = await (await client.get("/api/joins?processor=nope")).json()
@@ -121,7 +121,7 @@ async def test_list_joins_filters(client):
 
 async def test_configure_persists_and_exposes(client, hub):
     response = await client.post("/api/joins/configure", json={
-        "processor": "DMPS", "key": "s1",
+        "processor": "Processor", "key": "s1",
         "name": "Room name", "kind": "text", "enabled": True,
     })
     assert response.status == 200
@@ -130,7 +130,7 @@ async def test_configure_persists_and_exposes(client, hub):
 
     assert hub.store.path.exists()
     saved = json.loads(hub.store.path.read_text())
-    assert saved["joins"]["DMPS/s1"]["config"]["name"] == "Room name"
+    assert saved["joins"]["Processor/s1"]["config"]["name"] == "Room name"
 
     status = await (await client.get("/api/status")).json()
     assert status["exposed_joins"] == 1
@@ -138,14 +138,14 @@ async def test_configure_persists_and_exposes(client, hub):
 
 async def test_configure_rejects_a_kind_the_signal_cannot_be(client):
     response = await client.post("/api/joins/configure", json={
-        "processor": "DMPS", "key": "a1", "kind": "switch",
+        "processor": "Processor", "key": "a1", "kind": "switch",
     })
     assert response.status == 400
 
 
 async def test_configure_unknown_join_is_404(client):
     response = await client.post("/api/joins/configure", json={
-        "processor": "DMPS", "key": "d999", "name": "x",
+        "processor": "Processor", "key": "d999", "name": "x",
     })
     assert response.status == 404
 
@@ -156,15 +156,15 @@ async def test_configure_requires_processor_and_key(client):
 
 
 async def test_set_writes_to_the_connection(client, hub):
-    conn = hub.connections["DMPS"]
+    conn = hub.connections["Processor"]
     assert (await client.post("/api/joins/set", json={
-        "processor": "DMPS", "key": "d7", "value": True})).status == 200
+        "processor": "Processor", "key": "d7", "value": True})).status == 200
     assert (await client.post("/api/joins/set", json={
-        "processor": "DMPS", "key": "d7", "pulse": True})).status == 200
+        "processor": "Processor", "key": "d7", "pulse": True})).status == 200
     assert (await client.post("/api/joins/set", json={
-        "processor": "DMPS", "key": "a1", "value": 100})).status == 200
+        "processor": "Processor", "key": "a1", "value": 100})).status == 200
     assert (await client.post("/api/joins/set", json={
-        "processor": "DMPS", "key": "s1", "value": "hi"})).status == 200
+        "processor": "Processor", "key": "s1", "value": "hi"})).status == 200
     assert conn.writes == [
         ("d", 7, True), ("pulse", 7, None), ("a", 1, 100), ("s", 1, "hi"),
     ]
@@ -172,37 +172,37 @@ async def test_set_writes_to_the_connection(client, hub):
 
 async def test_set_rejects_a_malformed_key(client):
     response = await client.post("/api/joins/set", json={
-        "processor": "DMPS", "key": "x9", "value": 1})
+        "processor": "Processor", "key": "x9", "value": 1})
     assert response.status == 400
 
 
 async def test_set_on_a_disconnected_processor_is_unavailable(client, hub):
-    hub.connections["DMPS"].registered = False
+    hub.connections["Processor"].registered = False
     response = await client.post("/api/joins/set", json={
-        "processor": "DMPS", "key": "d7", "value": True})
+        "processor": "Processor", "key": "d7", "value": True})
     assert response.status == 503
 
 
 async def test_integration_feed_only_carries_exposed_joins(client, hub):
-    hub.store.configure("DMPS", "d7", kind="switch", enabled=True, name="Mute")
+    hub.store.configure("Processor", "d7", kind="switch", enabled=True, name="Mute")
     body = await (await client.get("/api/integration/joins")).json()
     assert len(body["joins"]) == 1
     entry = body["joins"][0]
     assert entry["kind"] == "switch"
     assert entry["name"] == "Mute"
     assert entry["available"] is True
-    assert body["processors"]["DMPS"]["registered"] is True
+    assert body["processors"]["Processor"]["registered"] is True
 
 
 async def test_integration_feed_names_unnamed_joins(client, hub):
-    hub.store.configure("DMPS", "a1", enabled=True)
+    hub.store.configure("Processor", "a1", enabled=True)
     body = await (await client.get("/api/integration/joins")).json()
-    assert body["joins"][0]["name"] == "DMPS a1"
+    assert body["joins"][0]["name"] == "Processor a1"
 
 
 async def test_integration_feed_reports_a_dropped_processor(client, hub):
-    hub.store.configure("DMPS", "d7", enabled=True)
-    hub.connections["DMPS"].registered = False
+    hub.store.configure("Processor", "d7", enabled=True)
+    hub.connections["Processor"].registered = False
     body = await (await client.get("/api/integration/joins")).json()
     assert body["joins"][0]["available"] is False
 
@@ -222,7 +222,7 @@ async def test_events_streams_join_updates(client, hub):
     # The subscriber is registered during prepare, so give the handler a turn
     # before publishing, otherwise the event goes nowhere.
     await asyncio.sleep(0.05)
-    hub._on_join("DMPS", _join("d", 12, True))
+    hub._on_join("Processor", _join("d", 12, True))
 
     line = await asyncio.wait_for(response.content.readline(), timeout=5)
     while line.startswith(b":") or line == b"\n":
@@ -237,7 +237,7 @@ async def test_events_streams_join_updates(client, hub):
 async def test_a_stalled_subscriber_is_dropped_not_blocking(hub):
     queue = hub.subscribe()
     for index in range(600):
-        hub._on_join("DMPS", _join("d", index + 1, True))
+        hub._on_join("Processor", _join("d", index + 1, True))
     # The queue is bounded; a browser that stopped reading gets unsubscribed
     # rather than stalling the hub.
     assert queue not in hub._subscribers
