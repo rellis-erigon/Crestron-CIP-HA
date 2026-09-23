@@ -1,0 +1,34 @@
+name: Version check
+
+# The add-on and the integration ship as a matched pair. On the Niagara
+# project they drifted — an add-on running against an integration from
+# before an architecture change — so this fails the build when they differ.
+# Skipped until both halves exist.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  versions-match:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare add-on and integration versions
+        run: |
+          addon_file=crestron-cip/config.yaml
+          manifest=custom_components/crestron_cip/manifest.json
+          if [ ! -f "$addon_file" ] || [ ! -f "$manifest" ]; then
+            echo "One half is not built yet — nothing to compare."
+            exit 0
+          fi
+          addon=$(grep -E '^version:' "$addon_file" | head -1 | sed -E 's/.*"(.*)".*/\1/')
+          integration=$(python3 -c "import json;print(json.load(open('$manifest'))['version'])")
+          echo "add-on:      $addon"
+          echo "integration: $integration"
+          if [ "$addon" != "$integration" ]; then
+            echo "::error::Version mismatch — add-on $addon, integration $integration."
+            exit 1
+          fi
+          echo "Versions match: $addon"
