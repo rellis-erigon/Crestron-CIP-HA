@@ -1,42 +1,57 @@
 # Crestron CIP for Home Assistant
 
-Brings a Crestron control processor's touchpanel joins into Home Assistant,
-discovering them automatically rather than asking you to type in join
-numbers.
+Brings Crestron control systems into Home Assistant by speaking CIP, the
+protocol a Crestron touchpanel uses, so no SIMPL module or symbol is needed on
+the processor beyond an XPanel definition.
 
-## How it works
+It ships in two halves, released as a matched pair:
 
-A processor exposes a touchpanel's joins over CIP on port 41794. Registering
-with an IPID the SIMPL program defines as an XPanel, then asking for an
-update, makes the processor dump every join it drives for that panel —
-digitals, analogs and serials, with their current values — and then signal
-end-of-query. That dump is the discovery: the panel describes itself.
+- **`crestron-cip/`** — the add-on. Holds the connection to each processor,
+  discovers joins, and provides the panel where you decide what each one is.
+- **`custom_components/crestron_cip/`** — the integration. A thin client that
+  turns the joins you exposed into entities.
 
-Two parts, versioned together:
+## Why two halves
 
-- **Add-on** — owns the CIP connections, the discovered join store, and the
-  management UI served through ingress.
-- **Integration** — a thin client over the add-on's REST API that creates
-  Home Assistant entities. No protocol code.
+The processor connection must stay open to see joins change, and the mapping
+work — pressing a button and watching which join moves — wants a real UI. The
+add-on owns both. The integration then has one job: create entities and write
+values back, which keeps it small enough to be reviewable.
 
-## Before you start
+## Installing
 
-Add an **XPanel (Smart Graphics)** device to each SIMPL program at an IPID
-that is not already in use, wired to the same joins as the existing
-touchpanel. Copying the existing panel symbol is the usual way.
+1. **Settings → Add-ons → Add-on store → ⋮ → Repositories**, add
+   `https://github.com/rellis-erigon/Crestron-CIP-HA`.
+2. Install **Crestron CIP Bridge** and configure your processors.
+3. Copy `custom_components/crestron_cip/` into your Home Assistant
+   `custom_components/` folder, or install this repository through HACS.
+4. **Settings → Devices & services → Add integration → Crestron CIP.** The
+   add-on is found through Supervisor; you should not have to type a URL.
 
-Registering with an IPID a real panel is using takes that panel's place and
-knocks it offline, which is why this needs an IPID of its own. An IPID the
-program does not define is refused harmlessly — `probe_ipid()` uses exactly
-that to check an IPID without disturbing anything.
+See [the add-on documentation](crestron-cip/DOCS.md) for how to find and map
+joins.
 
-Find the IPIDs already in use from the processor console:
+## What CIP gives you
 
+The bridge registers as an XPanel and receives the same join feedback a panel
+would: digital, analog and serial. That means it sees what the program
+publishes, and can drive anything the panel could drive.
+
+It does not read the SIMPL program, so it cannot tell you what `d12` is for.
+Nothing can. That is what the live join watcher is for.
+
+## Requirements
+
+An XPanel defined in each processor's **compiled program** at the IPID you
+configure. An IP table entry alone will not do — the processor answers and
+then rejects the registration, because the program has no device at that ID.
+
+## Development
+
+```bash
+pip install pytest pytest-asyncio pytest-aiohttp aiohttp
+pytest crestron-cip/tests -q
 ```
-iptable
-```
 
-## Status
-
-Early. The CIP client and its discovery path are built and tested; the join
-store, UI, REST API and integration are not yet written.
+The add-on and the integration carry the same version number, and CI fails
+the build if they drift.

@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Crestron CIP",
+        "description": "Connects to the Crestron CIP Bridge add-on, which holds the processor connections and the joins you chose to expose.",
+        "data": {
+          "addon_url": "Add-on URL"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the add-on. Check that it is running and that the URL is right."
+    },
+    "abort": {
+      "already_configured": "This add-on is already set up."
+    }
+  }
+}
