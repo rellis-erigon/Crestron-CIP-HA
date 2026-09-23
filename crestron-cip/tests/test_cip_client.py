@@ -257,3 +257,42 @@ async def test_close_sends_nothing_when_never_registered():
 
     assert writer.sent == b""
     assert writer.closed
+
+
+def test_a_refusal_and_a_timeout_are_different_failures():
+    """Conflating them took three processors offline until a hand restart.
+
+    The add-on restarted, the processors were still holding the previous
+    session, registration timed out, and the connection task exited for
+    good because a timeout was treated as "this IPID does not exist".
+    """
+    from cip_client import RegistrationError, RegistrationTimeout
+
+    assert not issubclass(RegistrationTimeout, RegistrationError)
+    assert not issubclass(RegistrationError, RegistrationTimeout)
+
+
+async def test_a_registration_timeout_is_raised_when_nothing_answers():
+    """A processor that accepts TCP and then says nothing must be retried."""
+    from cip_client import CipConnection, RegistrationTimeout
+
+    conn = CipConnection("192.0.2.10", 0x03, name="P")
+
+    async def _connected():
+        conn.connected = True
+
+    async def _silence(timeout):
+        return None
+
+    conn.connect = _connected
+    conn._read_frame = _silence
+
+    with pytest.raises(RegistrationTimeout):
+        await conn.discover(timeout=0.1)
+
+
+def test_a_refused_ipid_is_retried_rarely_rather_than_never():
+    """A design gets redeployed; an IPID that appears later should be found."""
+    from cip_client import REFUSED_RETRY
+
+    assert REFUSED_RETRY >= 600

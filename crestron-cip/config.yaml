@@ -1,6 +1,6 @@
 name: "Crestron CIP Bridge"
 description: "Discover Crestron touchpanel joins over CIP and expose them to Home Assistant"
-version: "0.1.5"
+version: "0.1.6"
 slug: crestron-cip
 url: "https://github.com/rellis-erigon/Crestron-CIP-HA"
 init: false

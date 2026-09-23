@@ -72,7 +72,18 @@ class SignalType(str, Enum):
 
 
 class RegistrationError(Exception):
-    """The processor refused the IPID."""
+    """The processor refused the IPID, and will keep refusing it."""
+
+
+class RegistrationTimeout(Exception):
+    """No answer to the registration. Worth trying again.
+
+    Not the same thing as a refusal, and conflating the two took three
+    processors offline: the add-on restarted, the processors were still
+    holding the previous session for a few seconds, registration timed out,
+    and the connection task exited permanently. Nothing retried until
+    somebody restarted the add-on by hand.
+    """
 
 
 @dataclass
@@ -151,6 +162,11 @@ def encode_serial(join: int, text: str) -> bytes:
 
 
 RECONNECT_CAP = 120.0
+
+# A processor that refuses the IPID outright is telling us about its
+# compiled program. Worth asking again occasionally, in case it is
+# redeployed, but not every two minutes.
+REFUSED_RETRY = 900.0
 
 
 def next_reconnect_delay(
@@ -355,7 +371,7 @@ class CipConnection:
                 continue
             await self._handle(*frame)
         if not self.registered:
-            raise RegistrationError(
+            raise RegistrationTimeout(
                 f"No registration result from {self.host} within {timeout:g}s"
             )
         return self.joins
@@ -387,10 +403,22 @@ class CipConnection:
                         await self._send(HEARTBEAT)
                         last_beat = now
             except RegistrationError as err:
+                # A refusal is a fact about the program, not a transient
+                # fault, so retry rarely rather than never: a design gets
+                # redeployed, and an IPID that appears later should be
+                # picked up without anyone restarting the add-on.
                 self.last_error = str(err)
-                logger.error("%s", err)
+                logger.error("%s — retrying in %.0fs", err, REFUSED_RETRY)
                 await self.close()
-                return
+                await asyncio.sleep(REFUSED_RETRY)
+                continue
+            except RegistrationTimeout as err:
+                self.last_error = str(err)
+                logger.warning("%s — reconnecting in %.0fs", err, delay)
+                await self.close()
+                await asyncio.sleep(delay)
+                delay = next_reconnect_delay(delay, reconnect_delay)
+                continue
             except (OSError, ConnectionError, asyncio.TimeoutError) as err:
                 self.last_error = str(err)
                 logger.warning("%s — reconnecting in %.0fs", err, delay)
