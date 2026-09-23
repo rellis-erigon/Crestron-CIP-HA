@@ -1,0 +1,12 @@
+rescan:
+  name: Re-scan joins
+  description: >-
+    Ask the add-on to re-read joins from the Crestron processor. Use this after a
+    change on the processor rather than waiting for a reconnect.
+  fields:
+    processor:
+      name: Crestron processor
+      description: Limit the scan to one processor. Omit to scan all of them.
+      required: false
+      selector:
+        text:

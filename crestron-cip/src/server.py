@@ -269,6 +269,44 @@ async def set_join(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def rediscover(request: web.Request) -> web.Response:
+    """Ask each processor to dump its joins again.
+
+    A processor only reports joins that are not at their default, so the
+    picture we hold is whatever it happened to send. After someone has used
+    the system — or a program has been reloaded — asking again is how new
+    joins are found without restarting anything.
+    """
+    hub: Hub = request.app["hub"]
+    body = await request.json() if request.can_read_body else {}
+    wanted = (body.get("processor") or "").strip()
+
+    if wanted and wanted not in hub.connections:
+        raise web.HTTPNotFound(reason=f"unknown processor {wanted}")
+    names = [wanted] if wanted else list(hub.connections)
+
+    results = {}
+    for name in names:
+        conn = hub.connections[name]
+        before = len(hub.store.for_processor(name))
+        try:
+            await conn.request_update()
+        except (OSError, ConnectionError) as err:
+            results[name] = {"ok": False, "error": str(err)}
+            continue
+        results[name] = {"ok": True, "joins_before": before}
+
+    # The dump arrives asynchronously, so give it a moment before reporting
+    # counts rather than returning numbers that are about to change.
+    await asyncio.sleep(2.0)
+    for name, result in results.items():
+        if result.get("ok"):
+            after = len(hub.store.for_processor(name))
+            result["joins"] = after
+            result["added"] = max(0, after - result.pop("joins_before", after))
+    return web.json_response({"ok": True, "processors": results})
+
+
 async def events(request: web.Request) -> web.StreamResponse:
     """Server-sent events, one per join update.
 
@@ -378,6 +416,7 @@ def build_app(hub: Hub) -> web.Application:
         web.get("/api/joins", list_joins),
         web.post("/api/joins/configure", configure_join),
         web.post("/api/joins/set", set_join),
+        web.post("/api/rediscover", rediscover),
         web.get("/api/events", events),
         web.get("/api/health", health),
         web.get("/api/integration/joins", integration_joins),

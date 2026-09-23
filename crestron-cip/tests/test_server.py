@@ -300,3 +300,34 @@ async def test_a_failed_reading_is_reported_rather_than_hidden(client, hub):
 
     status = await (await client.get("/api/status")).json()
     assert status["processors"][0]["health"]["ok"] is False
+
+
+# -- forced rescan -------------------------------------------------------
+
+async def test_rescan_asks_each_processor_to_dump_again(client, hub):
+    conn = hub.connections["Processor"]
+    conn.updates_requested = 0
+
+    async def request_update():
+        conn.updates_requested += 1
+
+    conn.request_update = request_update
+    body = await (await client.post("/api/rediscover", json={})).json()
+    assert conn.updates_requested == 1
+    assert body["processors"]["Processor"]["ok"] is True
+    assert body["processors"]["Processor"]["joins"] == 3
+
+
+async def test_rescan_of_an_unknown_processor_is_404(client):
+    response = await client.post("/api/rediscover", json={"processor": "nope"})
+    assert response.status == 404
+
+
+async def test_a_processor_that_cannot_be_asked_is_reported(client, hub):
+    async def refuse():
+        raise ConnectionError("not registered")
+
+    hub.connections["Processor"].request_update = refuse
+    body = await (await client.post("/api/rediscover", json={})).json()
+    assert body["processors"]["Processor"]["ok"] is False
+    assert "not registered" in body["processors"]["Processor"]["error"]

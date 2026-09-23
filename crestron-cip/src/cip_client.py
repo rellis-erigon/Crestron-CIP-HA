@@ -426,6 +426,19 @@ class CipConnection:
                 await asyncio.sleep(delay)
                 delay = next_reconnect_delay(delay, reconnect_delay)
 
+    async def request_update(self) -> None:
+        """Ask the processor to dump its joins again.
+
+        Cheaper and far less disruptive than reconnecting: the registration
+        stays up, and the processor re-sends everything it is driving. Since
+        it only reports joins that are not at their default, this is also
+        the only way to re-read state that changed while we were away.
+        """
+        if not self.registered:
+            raise ConnectionError(f"{self.name or self.host} is not registered")
+        self.discovery_complete = False
+        await self._send(REQUEST_UPDATE)
+
     async def set_digital(self, join: int, state: bool) -> None:
         await self._send(encode_digital(join, state))
         self._record(SignalType.DIGITAL, join, state)

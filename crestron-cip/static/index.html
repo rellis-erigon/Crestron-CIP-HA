@@ -116,6 +116,7 @@ tr.fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   <span class="spacer"></span>
   <label class="chk"><input type="checkbox" id="live" checked> Live</label>
   <button id="learn" title="Clear the highlight, then press something on the panel">Watch for changes</button>
+  <button id="rescan" title="Ask every processor to dump its joins again">Re-scan joins</button>
 </div>
 
 <div class="wrap">
@@ -527,6 +528,30 @@ $("search").addEventListener("input", () => {
   searchTimer = setTimeout(render, 150);
 });
 $("live").addEventListener("change", (event) => { state.live = event.target.checked; });
+$("rescan").addEventListener("click", async () => {
+  const button = $("rescan");
+  button.disabled = true;
+  button.textContent = "Scanning…";
+  try {
+    const result = await call("rediscover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const parts = Object.entries(result.processors).map(([name, r]) =>
+      r.ok ? `${name}: ${r.joins} joins${r.added ? ` (+${r.added})` : ""}`
+           : `${name}: ${r.error}`);
+    toast(parts.join(" · "));
+    await loadJoins();
+    loadStatus();
+  } catch (err) {
+    toast("Re-scan failed: " + err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Re-scan joins";
+  }
+});
+
 $("learn").addEventListener("click", () => {
   state.fresh.clear();
   $("sort").value = "recent";

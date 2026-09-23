@@ -116,3 +116,16 @@ One quirk worth knowing: **the first `cpuload` of any console session always
 reports around 100%**, because it is measuring the session starting up. The
 bridge asks twice and discards the first answer. A processor idling at 16%
 will otherwise look pinned.
+
+## Re-scanning joins
+
+**Re-scan joins** asks every processor to dump its joins again, without
+reconnecting or restarting anything. The registration stays up.
+
+This matters more here than on other systems. A processor only reports joins
+whose value is not the default, so what the bridge holds is whatever it
+happened to be sent. After someone has used the room — or a program has been
+reloaded — asking again is how new joins turn up.
+
+Also available as the `crestron_cip.rescan` service, optionally limited to
+one processor.
