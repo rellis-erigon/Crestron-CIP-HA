@@ -11,8 +11,11 @@ its own is not enough — the processor will answer, then reject the
 registration, because the program has no device at that ID.
 
 If you cannot recompile, you can point the bridge at an IPID an existing
-touchpanel already uses. Only one device may hold an IPID at a time, so the
-panel will be knocked offline while the bridge is connected.
+panel already uses. Whether that displaces the panel depends on what the
+program defines at that IPID: XPanel connections have been observed sharing
+one, with both ends registered and both receiving the same feedback. Treat a
+physical touchpanel's IPID as exclusive until you have confirmed otherwise on
+your own system, because a panel that drops is not subtle.
 
 ## Configuration
 

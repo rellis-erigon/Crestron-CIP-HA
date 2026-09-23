@@ -70,9 +70,15 @@ button. Do not replace either with a periodic list refresh.
   subprocess and exec of `/lib/ld-musl-x86_64.so.1` is denied. To get test
   dependencies, fetch wheels from PyPI with `urllib` and unzip them —
   `getwheels.py` in the session scratchpad does this. CI is unaffected.
-- **Hijacking an IPID knocks the real panel offline** for as long as the
-  bridge holds it. Only one device may hold an IPID at a time. `cip_probe.py`
-  is safe only against an IPID you believe is *undefined*.
+- **Whether an IPID can be shared is not settled.** Two XPanel connections
+  on one IPID have been reported working simultaneously, mirroring the same
+  feedback. This has not been tested here — an attempt was blocked as a
+  production read — so do not repeat the earlier claim in this file that an
+  IPID is exclusive; it was asserted, not measured. `cip_probe.py` remains
+  safe only against an IPID you believe is *undefined*.
+  If sharing does hold for XPanel devices, the "you must recompile with a
+  dedicated XPanel" requirement below softens considerably: the bridge could
+  ride alongside an existing panel permanently.
 
 ## Where things stand
 
