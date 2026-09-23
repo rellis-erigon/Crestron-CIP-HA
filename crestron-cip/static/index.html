@@ -145,6 +145,9 @@ const BASE = location.pathname.replace(/\/+$/, "") + "/";
 const api = (path) => BASE + "api/" + path;
 
 const SIGNAL_NAME = { d: "digital", a: "analog", s: "serial" };
+// Mirrors DEFAULT_KIND in the add-on, so a join that arrives over the
+// stream offers the same default the API would have given it.
+const DEFAULT_KIND = { d: "binary_sensor", a: "sensor", s: "sensor" };
 
 const state = {
   joins: new Map(),       // "processor/key" -> join
@@ -484,7 +487,8 @@ function connectStream() {
     if (isNew) {
       join = {
         processor: event.processor, key: event.key, signal: event.signal,
-        number: event.number, config: { name: event.name || "" }, kind: "",
+        number: event.number, kind: DEFAULT_KIND[event.signal] || "sensor",
+        config: { name: event.name || "", enabled: false },
       };
       state.joins.set(key, join);
     }
