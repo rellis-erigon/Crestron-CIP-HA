@@ -5,17 +5,28 @@ joins they report, and lets you choose which become Home Assistant entities.
 
 ## Before you start
 
-The bridge registers as an **XPanel**, so each processor needs one defined in
-its **compiled program** at the IPID you configure here. An IP table entry on
-its own is not enough — the processor will answer, then reject the
-registration, because the program has no device at that ID.
+The bridge registers as an **XPanel**, so each processor needs a panel
+defined in its **compiled program** at the IPID you configure here. An IP
+table entry on its own is not enough — the processor will answer, then reject
+the registration, because the program has no device at that ID.
 
-If you cannot recompile, you can point the bridge at an IPID an existing
-panel already uses. Whether that displaces the panel depends on what the
-program defines at that IPID: XPanel connections have been observed sharing
-one, with both ends registered and both receiving the same feedback. Treat a
-physical touchpanel's IPID as exclusive until you have confirmed otherwise on
-your own system, because a panel that drops is not subtle.
+**You can usually share an IPID with an existing panel.** Two connections on
+one IPID have been measured holding at the same time: both registered, both
+receiving the same feedback, neither displacing the other. So in most cases
+there is no SIMPL work to do — point the bridge at an IPID a panel already
+uses and leave the panel where it is.
+
+Two things follow from how the processor behaves here:
+
+- When a new connection registers, the processor re-sends its joins to
+  *every* attached client. A duplicate dump is normal and harmless.
+- Both ends can drive the system. The bridge writing a join looks exactly
+  like the panel doing it, so an automation and a person pressing the panel
+  can contend. That is a design question for your automations, not a fault.
+
+Confirm sharing on your own system before relying on it. A panel that drops
+is not subtle, but it is also not something you want to discover during an
+event.
 
 ## Configuration
 

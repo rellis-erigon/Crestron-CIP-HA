@@ -70,15 +70,18 @@ button. Do not replace either with a periodic list refresh.
   subprocess and exec of `/lib/ld-musl-x86_64.so.1` is denied. To get test
   dependencies, fetch wheels from PyPI with `urllib` and unzip them —
   `getwheels.py` in the session scratchpad does this. CI is unaffected.
-- **Whether an IPID can be shared is not settled.** Two XPanel connections
-  on one IPID have been reported working simultaneously, mirroring the same
-  feedback. This has not been tested here — an attempt was blocked as a
-  production read — so do not repeat the earlier claim in this file that an
-  IPID is exclusive; it was asserted, not measured. `cip_probe.py` remains
-  safe only against an IPID you believe is *undefined*.
-  If sharing does hold for XPanel devices, the "you must recompile with a
-  dedicated XPanel" requirement below softens considerably: the bridge could
-  ride alongside an existing panel permanently.
+- **An IPID can be shared. This is measured, not assumed.** Two connections
+  to one processor on the same IPID both registered and both held for the
+  duration of the test, each receiving feedback. An earlier version of this
+  file claimed the opposite; that was inferred from the shape of the
+  registration exchange and was simply wrong.
+  So there is usually no recompile to do — the bridge rides alongside an
+  existing panel. `cip_probe.py` is still only *safe* against an IPID you
+  believe is undefined, since a probe that succeeds has registered.
+- **A new registration makes the processor re-dump to every client.** The
+  first connection saw a second full join dump the moment a second one
+  attached. `JoinStore.observe()` is idempotent, so this costs nothing, but
+  do not read a duplicate dump as a reconnection.
 
 ## Where things stand
 
@@ -87,14 +90,16 @@ button. Do not replace either with a periodic list refresh.
   returned 0 joins — and two DMPS units driving function rooms.
 - Real joins captured from both DMPS units, 11 each. That number is the
   point: the programs have hundreds.
-- **Not yet verified live**: the add-on running as an add-on, against a real
-  processor, end to end. It has been smoke-tested with a stubbed connection.
-- IPID 10 was added to the IP tables but there is still no XPanel at that
-  IPID in any compiled program, so it will not register. Either recompile
-  with an XPanel, or point the bridge at an existing panel's IPID and accept
-  that the panel drops while it is connected.
-- The repository is **private**, so Supervisor cannot add it as an add-on
-  store. It needs to be public, or the add-on copied into `/addons`.
+- **Verified live**: the full add-on stack — connections, store, API, event
+  stream — run against both DMPS units at once. Both registered, both
+  dumped their joins, all of it arrived over SSE, clean disconnect. What has
+  *not* been exercised is the add-on running under Supervisor as a container,
+  and the integration creating entities from it.
+- IPID 10 was added to the IP tables but no program defines a panel there, so
+  it will not register. It is also unnecessary: an existing panel's IPID can
+  be shared, so use one of those.
+- Still untested: writing a join to a live system. Every test so far has been
+  read-only.
 
 ## Conventions
 

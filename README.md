@@ -42,9 +42,15 @@ Nothing can. That is what the live join watcher is for.
 
 ## Requirements
 
-An XPanel defined in each processor's **compiled program** at the IPID you
+A panel defined in each processor's **compiled program** at the IPID you
 configure. An IP table entry alone will not do — the processor answers and
 then rejects the registration, because the program has no device at that ID.
+
+You do not necessarily need a *new* one. Two connections on the same IPID
+have been measured holding simultaneously, both registered and both
+receiving feedback, so the bridge can usually sit alongside an existing
+panel rather than replacing it. Confirm it on your own system before
+relying on it.
 
 ## Development
 
