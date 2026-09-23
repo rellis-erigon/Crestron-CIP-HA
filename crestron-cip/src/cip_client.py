@@ -146,6 +146,23 @@ def encode_serial(join: int, text: str) -> bytes:
     return bytes(frame)
 
 
+RECONNECT_CAP = 120.0
+
+
+def next_reconnect_delay(
+    current: float, base: float = 10.0, cap: float = RECONNECT_CAP,
+) -> float:
+    """Widen the gap between reconnection attempts, up to a ceiling.
+
+    The ceiling matters as much as the growth: a processor that comes back
+    after an hour should be picked up within a couple of minutes, not left
+    until some doubling sequence happens to come round again.
+    """
+    if current < base:
+        return base
+    return min(current * 2, cap)
+
+
 class CipConnection:
     """One XPanel connection to one processor."""
 
@@ -327,10 +344,17 @@ class CipConnection:
         A registration failure is not retried: an undefined IPID will still
         be undefined in ten seconds, and reconnecting in a loop would just
         hammer the processor.
+
+        A *connection* failure is retried, but with a widening gap. One
+        processor here began refusing TCP outright after an unclean
+        disconnect, and a flat ten-second retry meant knocking on its door
+        six times a minute for as long as it stayed shut.
         """
+        delay = reconnect_delay
         while True:
             try:
                 await self.discover()
+                delay = reconnect_delay
                 last_beat = time.time()
                 while True:
                     frame = await self._read_frame(timeout=5.0)
@@ -347,9 +371,10 @@ class CipConnection:
                 return
             except (OSError, ConnectionError, asyncio.TimeoutError) as err:
                 self.last_error = str(err)
-                logger.warning("%s — reconnecting in %.0fs", err, reconnect_delay)
+                logger.warning("%s — reconnecting in %.0fs", err, delay)
                 await self.close()
-                await asyncio.sleep(reconnect_delay)
+                await asyncio.sleep(delay)
+                delay = next_reconnect_delay(delay, reconnect_delay)
 
     async def set_digital(self, join: int, state: bool) -> None:
         await self._send(encode_digital(join, state))

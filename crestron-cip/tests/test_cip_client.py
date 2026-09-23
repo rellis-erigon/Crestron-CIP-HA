@@ -167,3 +167,25 @@ async def test_a_later_update_replaces_the_value(processor):
     assert len(conn.joins) == 4, "an update must not create a second join"
     assert conn.joins["a7"].value == 4321
     assert conn.joins["a7"].updates == 2
+
+
+def test_reconnect_delay_widens_to_a_ceiling():
+    from cip_client import RECONNECT_CAP, next_reconnect_delay
+
+    delay = 10.0
+    seen = [delay]
+    for _ in range(6):
+        delay = next_reconnect_delay(delay)
+        seen.append(delay)
+    assert seen[:4] == [10.0, 20.0, 40.0, 80.0]
+    assert seen[-1] == RECONNECT_CAP
+    # A processor that comes back must be picked up in reasonable time, so
+    # the gap has to stop growing.
+    assert next_reconnect_delay(RECONNECT_CAP) == RECONNECT_CAP
+
+
+def test_reconnect_delay_never_drops_below_the_base():
+    from cip_client import next_reconnect_delay
+
+    assert next_reconnect_delay(0.0, base=10.0) == 10.0
+    assert next_reconnect_delay(1.0, base=10.0) == 10.0
