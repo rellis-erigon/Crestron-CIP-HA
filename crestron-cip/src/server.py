@@ -21,6 +21,7 @@ from pathlib import Path
 from aiohttp import web
 
 from cip_client import CipConnection, SignalType
+from console import Health, read_health
 from join_store import KINDS_FOR_SIGNAL, VALID_KINDS, JoinStore
 
 logger = logging.getLogger("crestron-cip.server")
@@ -36,6 +37,9 @@ class Hub:
     def __init__(self, store: JoinStore) -> None:
         self.store = store
         self.connections: dict[str, CipConnection] = {}
+        self.health: dict[str, Health] = {}
+        self.console: dict[str, dict] = {}
+        self.health_interval = 300.0
         self._subscribers: set[asyncio.Queue] = set()
         self._tasks: list[asyncio.Task] = []
 
@@ -87,6 +91,40 @@ class Hub:
         for conn in self.connections.values():
             self._tasks.append(asyncio.create_task(conn.run()))
         self._tasks.append(asyncio.create_task(self._autosave()))
+        if self.console:
+            self._tasks.append(asyncio.create_task(self._poll_health()))
+
+    async def _poll_health(self) -> None:
+        """Read processor load and memory from the text console.
+
+        Deliberately slow, and one processor at a time. Each reading is a
+        full SSH login, and these processors do not enjoy having sessions
+        opened at them in quick succession — during development a run of
+        rapid logins was followed by one dropping off the network entirely.
+        Minutes apart, sequential, is the safe shape.
+        """
+        # Let the CIP connections settle before adding SSH on top.
+        await asyncio.sleep(30)
+        while True:
+            for name, credentials in self.console.items():
+                try:
+                    health = await read_health(
+                        credentials["host"], credentials.get("username", ""),
+                        credentials.get("password", ""),
+                    )
+                except Exception as err:  # noqa: BLE001 - never kill the loop
+                    health = Health(error=str(err))
+                self.health[name] = health
+                if health.ok:
+                    logger.debug(
+                        "%s: cpu %.0f%%, memory %.0f%%",
+                        name, health.cpu_percent or 0, health.memory_percent or 0,
+                    )
+                elif health.error:
+                    logger.debug("%s health: %s", name, health.error)
+                # Space the logins out rather than firing them together.
+                await asyncio.sleep(10)
+            await asyncio.sleep(self.health_interval)
 
     async def stop(self) -> None:
         for task in self._tasks:
@@ -136,6 +174,8 @@ async def status(request: web.Request) -> web.Response:
                 # only needs the counts.
                 "joins": None,
                 "stored_joins": len(hub.store.for_processor(name)),
+                "health": (hub.health[name].to_dict()
+                           if name in hub.health else None),
             }
             for name, conn in hub.connections.items()
         ],
@@ -261,6 +301,16 @@ async def events(request: web.Request) -> web.StreamResponse:
     return response
 
 
+async def health(request: web.Request) -> web.Response:
+    """Processor load and memory, as last read from the console."""
+    hub: Hub = request.app["hub"]
+    return web.json_response({
+        "health": {name: reading.to_dict() for name, reading in hub.health.items()},
+        "interval": hub.health_interval,
+        "configured": sorted(hub.console),
+    })
+
+
 async def integration_joins(request: web.Request) -> web.Response:
     """What the Home Assistant integration consumes: exposed joins only."""
     hub: Hub = request.app["hub"]
@@ -285,7 +335,12 @@ async def integration_joins(request: web.Request) -> web.Response:
             for j in hub.store.exposed()
         ],
         "processors": {
-            name: {"registered": conn.registered, "host": conn.host}
+            name: {
+                "registered": conn.registered,
+                "host": conn.host,
+                "health": (hub.health[name].to_dict()
+                           if name in hub.health else None),
+            }
             for name, conn in hub.connections.items()
         },
     })
@@ -324,6 +379,7 @@ def build_app(hub: Hub) -> web.Application:
         web.post("/api/joins/configure", configure_join),
         web.post("/api/joins/set", set_join),
         web.get("/api/events", events),
+        web.get("/api/health", health),
         web.get("/api/integration/joins", integration_joins),
     ])
     if STATIC_DIR.is_dir():

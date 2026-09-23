@@ -117,6 +117,30 @@ The practical lesson is the backoff: a flat retry would have hammered a
 booting processor 70-odd times. The widening one tried five times and caught
 it within two minutes of the port reopening.
 
+## Reading processor health
+
+Load and memory are not in CIP. They come from the text console over SSH,
+and getting that working took three attempts:
+
+- `ssh` only accepts a password from a **controlling terminal**, and
+  `pty.fork()` is what establishes one.
+- Forking a pty from a **worker thread** is unreliable — one processor would
+  answer and the next return an empty transcript.
+- `openpty` plus `Popen` gives the child **no controlling terminal at all**,
+  so every login is refused with "Permission denied".
+
+So the session runs in a **child process**, which forks its pty from its own
+main thread. The password goes in on stdin, never argv.
+
+**The first `cpuload` of a session always reads ~100%.** It is measuring the
+session starting. Sample twice, discard the first, or report a processor
+idling at 16% as pinned.
+
+**Poll slowly.** During development a run of rapid SSH logins to one
+processor was followed by it dropping off the network entirely — no ICMP, no
+ports. Causation was never proven, but the default is now five minutes,
+sequential, ten seconds apart, and it should stay that way.
+
 ## Where things stand
 
 - CIP proven against three processors on the development site: one CP4

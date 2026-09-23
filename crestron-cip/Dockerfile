@@ -10,6 +10,10 @@ ENV CRESTRON_CIP_VERSION=${BUILD_VERSION}
 # hand-typed constant that would drift.
 COPY config.yaml /app/config.yaml
 
+# The processors report load and memory only over their text console, and
+# that needs an ssh client. CIP itself does not.
+RUN apk add --no-cache openssh-client
+
 COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 

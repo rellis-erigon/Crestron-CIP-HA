@@ -82,3 +82,37 @@ scale to `0.0015259` (100 ÷ 65535) and a unit of `%`.
 What you decide about a join — its name, kind and whether it is exposed — is
 kept separately from what the processor reports, and survives restarts,
 reconnections and program reloads.
+
+## Processor load and memory
+
+CIP carries joins and nothing else, so load and memory come from the
+processor's text console over SSH. Add credentials to a processor to enable
+it:
+
+```yaml
+processors:
+  - name: Main Hall
+    host: 192.0.2.10
+    ipid: 16
+    console_username: admin
+    console_password: secret
+health_interval: 300
+```
+
+Without credentials the bridge simply reports no figures; nothing else
+changes.
+
+You get CPU load, memory used and free, uptime and firmware version, as
+diagnostic entities on each processor's device.
+
+**The interval is deliberately in minutes.** Each reading is a full SSH
+login, and these processors do not enjoy having sessions opened at them in
+quick succession — during development a run of rapid logins was followed by
+a processor dropping off the network entirely. The bridge reads one
+processor at a time, ten seconds apart, and the default gap is five minutes.
+Do not shorten it without a reason.
+
+One quirk worth knowing: **the first `cpuload` of any console session always
+reports around 100%**, because it is measuring the session starting up. The
+bridge asks twice and discards the first answer. A processor idling at 16%
+will otherwise look pinned.

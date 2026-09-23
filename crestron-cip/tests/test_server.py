@@ -264,3 +264,39 @@ async def test_a_double_slash_still_serves_the_panel(client):
 
 async def test_an_unknown_api_path_is_still_404(client):
     assert (await client.get("/api/nope")).status == 404
+
+
+# -- console health ------------------------------------------------------
+
+async def test_health_is_absent_until_it_has_been_read(client):
+    body = await (await client.get("/api/health")).json()
+    assert body["health"] == {}
+    assert body["configured"] == []
+
+
+async def test_health_appears_on_status_and_the_integration_feed(client, hub):
+    from console import parse_health
+
+    hub.health["DMPS"] = parse_health(
+        "CPU:LOAD 99%\nCPU:LOAD 16%\n36 percent of memory in use"
+    )
+    hub.store.configure("Processor", "d7", enabled=True)
+
+    status = await (await client.get("/api/status")).json()
+    assert status["processors"][0]["health"] is None  # keyed by processor name
+
+    body = await (await client.get("/api/health")).json()
+    assert body["health"]["DMPS"]["cpu_percent"] == 16.0
+    assert body["health"]["DMPS"]["memory_percent"] == 36.0
+
+
+async def test_a_failed_reading_is_reported_rather_than_hidden(client, hub):
+    from console import Health
+
+    hub.health["Processor"] = Health(error="console session timed out")
+    body = await (await client.get("/api/health")).json()
+    assert body["health"]["Processor"]["ok"] is False
+    assert "timed out" in body["health"]["Processor"]["error"]
+
+    status = await (await client.get("/api/status")).json()
+    assert status["processors"][0]["health"]["ok"] is False

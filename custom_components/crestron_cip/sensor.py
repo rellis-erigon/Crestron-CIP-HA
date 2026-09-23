@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import DOMAIN
 from .entity import CrestronEntity
 from .helpers import setup_kind
 
@@ -15,6 +16,27 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     setup_kind(hass, entry, async_add_entities, "sensor", CrestronSensor)
+
+    # Processor load and memory come from the console rather than from any
+    # join, so they are built once from the coordinator's processor list.
+    from .diagnostics_sensor import build_health_entities
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    known: set[str] = set()
+
+    @callback
+    def _add_health() -> None:
+        fresh = [
+            entity for entity in build_health_entities(coordinator)
+            if entity.unique_id not in known
+        ]
+        if not fresh:
+            return
+        known.update(entity.unique_id for entity in fresh)
+        async_add_entities(fresh)
+
+    _add_health()
+    entry.async_on_unload(coordinator.async_add_listener(_add_health))
 
 
 class CrestronSensor(CrestronEntity, SensorEntity):

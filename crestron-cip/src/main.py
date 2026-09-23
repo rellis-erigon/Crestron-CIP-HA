@@ -87,6 +87,22 @@ async def run() -> None:
         hub.add_processor(name, host, int(ipid))
         logger.info("Processor %s at %s as IPID 0x%02X", name, host, ipid)
 
+        # Console credentials are optional: without them the bridge simply
+        # reports no load or memory figures.
+        if entry.get("console_username"):
+            hub.console[name] = {
+                "host": host,
+                "username": entry.get("console_username", ""),
+                "password": entry.get("console_password", ""),
+            }
+
+    hub.health_interval = float(options.get("health_interval", 300))
+    if hub.console:
+        logger.info(
+            "Reading console health from %d processor(s) every %.0fs",
+            len(hub.console), hub.health_interval,
+        )
+
     await hub.start()
 
     port = int(os.environ.get("INGRESS_PORT", "8099"))
