@@ -15,7 +15,28 @@ from join_store import STORE_FILE, JoinStore
 from server import Hub, build_app
 
 OPTIONS_PATH = Path("/data/options.json")
-VERSION = os.environ.get("CRESTRON_CIP_VERSION") or "unknown"
+MANIFEST_PATH = Path("/app/config.yaml")
+
+
+def _version() -> str:
+    """The add-on's version, from the build arg or the manifest it shipped with.
+
+    Reading one `version:` line does not justify a YAML dependency, and the
+    add-on has no other use for one.
+    """
+    from_build = os.environ.get("CRESTRON_CIP_VERSION")
+    if from_build and from_build != "":
+        return from_build
+    try:
+        for line in MANIFEST_PATH.read_text().splitlines():
+            if line.startswith("version:"):
+                return line.split(":", 1)[1].strip().strip('"\'')
+    except OSError:
+        pass
+    return "unknown"
+
+
+VERSION = _version()
 
 logger = logging.getLogger("crestron-cip")
 

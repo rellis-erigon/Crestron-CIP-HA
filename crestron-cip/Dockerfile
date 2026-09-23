@@ -1,10 +1,14 @@
 ARG BUILD_FROM
 FROM $BUILD_FROM
 
-# Supervisor passes the version from config.yaml, so the running add-on
-# reports what it was built from rather than a hand-typed constant.
 ARG BUILD_VERSION
 ENV CRESTRON_CIP_VERSION=${BUILD_VERSION}
+
+# config.yaml is the one place the version is written, and it travels with
+# the image. BUILD_VERSION did not survive the Supervisor build — the add-on
+# reported "vunknown" — so the manifest itself is the fallback rather than a
+# hand-typed constant that would drift.
+COPY config.yaml /app/config.yaml
 
 COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
