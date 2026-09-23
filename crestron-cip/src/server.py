@@ -299,6 +299,14 @@ async def kinds(request: web.Request) -> web.Response:
 
 
 async def index(request: web.Request) -> web.Response:
+    """Serve the panel for any path that is not an API call.
+
+    Ingress composes the URL it forwards, and it does not always compose
+    what you expect — a stray double slash once made the whole panel 404.
+    Anything that is not /api is the page.
+    """
+    if request.path.startswith("/api/"):
+        raise web.HTTPNotFound()
     page = STATIC_DIR / "index.html"
     if not page.exists():
         return web.Response(text="UI not installed", status=404)
@@ -320,4 +328,6 @@ def build_app(hub: Hub) -> web.Application:
     ])
     if STATIC_DIR.is_dir():
         app.router.add_static("/static/", STATIC_DIR)
+    # Last, so it only catches what nothing else claimed.
+    app.router.add_get("/{tail:.*}", index)
     return app

@@ -1,12 +1,11 @@
 name: "Crestron CIP Bridge"
 description: "Discover Crestron touchpanel joins over CIP and expose them to Home Assistant"
-version: "0.1.1"
+version: "0.1.2"
 slug: crestron-cip
 url: "https://github.com/rellis-erigon/Crestron-CIP-HA"
 init: false
 ingress: true
 ingress_port: 8099
-ingress_entry: /
 panel_icon: mdi:television-guide
 panel_title: Crestron
 arch:

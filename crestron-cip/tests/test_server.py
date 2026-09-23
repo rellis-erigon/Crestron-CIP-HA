@@ -248,3 +248,19 @@ async def test_index_falls_back_when_the_ui_is_missing(client, monkeypatch):
     monkeypatch.setattr(server, "STATIC_DIR", Path("/nonexistent"))
     response = await client.get("/")
     assert response.status == 404
+
+
+async def test_a_double_slash_still_serves_the_panel(client):
+    """Ingress composed the panel URL with a trailing double slash.
+
+    The add-on 404'd on it and the panel came up blank in Home Assistant, so
+    any non-API path now serves the page.
+    """
+    for path in ("/", "//", "/anything"):
+        response = await client.get(path)
+        assert response.status == 200, path
+        assert "<!DOCTYPE html>" in await response.text()
+
+
+async def test_an_unknown_api_path_is_still_404(client):
+    assert (await client.get("/api/nope")).status == 404
