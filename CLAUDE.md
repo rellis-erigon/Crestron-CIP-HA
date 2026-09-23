@@ -101,11 +101,21 @@ A refusal is not the same as a rejected registration. `ff ff 02` means the
 program has no device at that IPID; `ECONNREFUSED` means nothing is
 listening at all.
 
-Whether an unclean disconnect causes this is **not established**. The timing
-was suggestive, there was no prior baseline for that processor's web ports,
-and a program can stop for its own reasons. `close()` now sends a disconnect
-frame so the question stops arising, but do not record the causal claim as
-fact without evidence.
+**It recovered on its own after about twelve minutes**, with no
+intervention, and registered on the next scheduled retry. Everything came
+back together — CIP, web, telnet — which is what a processor restarting
+looks like, not what a held IPID slot looks like. A held slot would have
+refused registration while the port stayed open.
+
+So: do not go to site for this, and do not assume an unclean disconnect
+caused it. The timing was suggestive and nothing more — there was no prior
+baseline for that processor's web ports, and a program can restart for its
+own reasons. `close()` now sends a disconnect frame anyway, because the
+courtesy costs three bytes.
+
+The practical lesson is the backoff: a flat retry would have hammered a
+booting processor 70-odd times. The widening one tried five times and caught
+it within two minutes of the port reopening.
 
 ## Where things stand
 
