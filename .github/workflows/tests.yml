@@ -15,6 +15,6 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install pytest pytest-asyncio
+        run: pip install pytest pytest-asyncio pytest-aiohttp aiohttp
       - name: Run add-on tests
         run: pytest crestron-cip/tests -q

@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crestron CIP</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #fff; --line: #e1e4e8; --text: #1c1e21;
+  --muted: #6a737d; --accent: #03a9f4; --ok: #2e9e4f; --warn: #d98600;
+  --bad: #c1352b; --flash: rgba(3, 169, 244, .28);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --panel: #1b1f24; --line: #2c333b; --text: #e6e8ea;
+    --muted: #8b949e; --accent: #4fc3f7; --ok: #4caf50; --warn: #ffa726;
+    --bad: #ef5350; --flash: rgba(79, 195, 247, .22);
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+header { padding: 16px 20px 8px; }
+h1 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
+.sub { color: var(--muted); font-size: 13px; }
+.procs { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 20px; }
+.proc {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 12px; min-width: 190px;
+}
+.proc b { display: block; }
+.proc .meta { color: var(--muted); font-size: 12px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+       margin-right: 6px; background: var(--muted); vertical-align: 1px; }
+.dot.up { background: var(--ok); } .dot.down { background: var(--bad); }
+.bar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  padding: 10px 20px; position: sticky; top: 0; z-index: 5;
+  background: var(--bg); border-bottom: 1px solid var(--line);
+}
+input, select, button {
+  font: inherit; color: var(--text); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px;
+}
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+button { cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #002733; }
+button:disabled { opacity: .5; cursor: default; }
+.grow { flex: 1 1 180px; min-width: 140px; }
+.spacer { flex: 1 1 auto; }
+label.chk { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.wrap { padding: 0 20px 40px; }
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left; font-size: 12px; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--muted); font-weight: 600;
+  padding: 10px 8px; border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tr.flash { animation: flash 1.1s ease-out; }
+@keyframes flash { from { background: var(--flash); } to { background: transparent; } }
+tr.fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.key { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 600; }
+.sig { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+.val {
+  font-family: ui-monospace, Menlo, monospace; max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;
+}
+.val.on { color: var(--ok); } .val.off { color: var(--muted); }
+.name { width: 100%; }
+.num { width: 70px; }
+.muted { color: var(--muted); }
+.write { display: flex; gap: 4px; align-items: center; }
+.write input { width: 90px; }
+.empty { padding: 48px 8px; text-align: center; color: var(--muted); }
+.toast {
+  position: fixed; right: 16px; bottom: 16px; background: var(--panel);
+  border: 1px solid var(--line); border-left: 3px solid var(--bad);
+  border-radius: 6px; padding: 10px 14px; max-width: 380px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.2);
+}
+@media (max-width: 720px) {
+  .hide-narrow { display: none; }
+  .wrap, .bar, .procs, header { padding-left: 10px; padding-right: 10px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Crestron CIP</h1>
+  <div class="sub" id="summary">Connecting…</div>
+</header>
+
+<div class="procs" id="procs"></div>
+
+<div class="bar">
+  <select id="f-processor"><option value="">All processors</option></select>
+  <select id="f-signal">
+    <option value="">All signals</option>
+    <option value="d">Digital</option>
+    <option value="a">Analog</option>
+    <option value="s">Serial</option>
+  </select>
+  <select id="f-only">
+    <option value="">Everything</option>
+    <option value="named">Named</option>
+    <option value="enabled">Exposed</option>
+  </select>
+  <select id="sort">
+    <option value="recent">Most recent first</option>
+    <option value="key">By join number</option>
+  </select>
+  <input class="grow" id="search" placeholder="Search join, name or value…">
+  <span class="spacer"></span>
+  <label class="chk"><input type="checkbox" id="live" checked> Live</label>
+  <button id="learn" title="Clear the highlight, then press something on the panel">Watch for changes</button>
+</div>
+
+<div class="wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Join</th>
+        <th>Value</th>
+        <th>Name</th>
+        <th>Expose as</th>
+        <th>On</th>
+        <th class="hide-narrow">Write</th>
+        <th class="hide-narrow">Seen</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="empty" id="empty" hidden></div>
+</div>
+
+<script>
+"use strict";
+
+// Ingress serves this page under a token path, so every request is relative
+// to wherever the page itself was loaded from.
+const BASE = location.pathname.replace(/\/+$/, "") + "/";
+const api = (path) => BASE + "api/" + path;
+
+const SIGNAL_NAME = { d: "digital", a: "analog", s: "serial" };
+
+const state = {
+  joins: new Map(),       // "processor/key" -> join
+  kinds: { d: [], a: [], s: [] },
+  rows: new Map(),        // "processor/key" -> <tr>
+  fresh: new Set(),       // changed since the last "Watch for changes"
+  live: true,
+  renderPending: false,
+};
+
+const $ = (id) => document.getElementById(id);
+const storeKey = (j) => j.processor + "/" + j.key;
+
+function toast(message) {
+  document.querySelectorAll(".toast").forEach((n) => n.remove());
+  const node = document.createElement("div");
+  node.className = "toast";
+  node.textContent = message;
+  document.body.appendChild(node);
+  setTimeout(() => node.remove(), 6000);
+}
+
+async function call(path, options) {
+  const response = await fetch(api(path), options);
+  if (!response.ok) {
+    // aiohttp puts the explanation in the status line, which is the only
+    // place a raised HTTPBadRequest(reason=...) survives to.
+    throw new Error(response.statusText || ("HTTP " + response.status));
+  }
+  return response.json();
+}
+
+function ago(seconds) {
+  if (!seconds) return "—";
+  const delta = Math.max(0, Date.now() / 1000 - seconds);
+  if (delta < 60) return Math.round(delta) + "s";
+  if (delta < 3600) return Math.round(delta / 60) + "m";
+  if (delta < 86400) return Math.round(delta / 3600) + "h";
+  return Math.round(delta / 86400) + "d";
+}
+
+function formatValue(join) {
+  if (join.signal === "d") return join.value ? "TRUE" : "false";
+  if (join.value === null || join.value === undefined) return "—";
+  return String(join.value);
+}
+
+// -- filtering and sorting ------------------------------------------------
+
+function visible() {
+  const processor = $("f-processor").value;
+  const signal = $("f-signal").value;
+  const only = $("f-only").value;
+  const search = $("search").value.trim().toLowerCase();
+
+  let list = [...state.joins.values()];
+  if (processor) list = list.filter((j) => j.processor === processor);
+  if (signal) list = list.filter((j) => j.signal === signal);
+  if (only === "enabled") list = list.filter((j) => j.config.enabled);
+  if (only === "named") list = list.filter((j) => j.config.name);
+  if (search) {
+    list = list.filter((j) =>
+      j.key.toLowerCase().includes(search) ||
+      (j.config.name || "").toLowerCase().includes(search) ||
+      String(j.value).toLowerCase().includes(search) ||
+      j.processor.toLowerCase().includes(search));
+  }
+
+  if ($("sort").value === "recent") {
+    list.sort((a, b) => (b.last_seen || 0) - (a.last_seen || 0));
+  } else {
+    list.sort((a, b) =>
+      a.processor.localeCompare(b.processor) ||
+      a.signal.localeCompare(b.signal) ||
+      a.number - b.number);
+  }
+  return list;
+}
+
+function scheduleRender() {
+  if (state.renderPending) return;
+  state.renderPending = true;
+  // A busy panel can move joins many times a second; batching keeps the
+  // table from being rebuilt on every frame.
+  setTimeout(() => { state.renderPending = false; render(); }, 200);
+}
+
+function render() {
+  const list = visible();
+  const body = $("rows");
+  const editing = document.activeElement;
+  const editingKey = editing && editing.closest("tr")
+    ? editing.closest("tr").dataset.store : null;
+
+  const fragment = document.createDocumentFragment();
+  for (const join of list) {
+    const key = storeKey(join);
+    let row = state.rows.get(key);
+    // Rebuilding a row the user is typing in would eat the keystroke, so
+    // that one row is moved as-is.
+    if (!row) { row = buildRow(join); state.rows.set(key, row); }
+    if (key !== editingKey) updateRow(row, join);
+    fragment.appendChild(row);
+  }
+  body.replaceChildren(fragment);
+
+  const empty = $("empty");
+  empty.hidden = list.length > 0;
+  if (!list.length) {
+    empty.textContent = state.joins.size
+      ? "No joins match those filters."
+      : "No joins yet. A processor only reports joins that are not at their "
+        + "default, so press something on the panel and they will appear here.";
+  }
+}
+
+// -- rows -----------------------------------------------------------------
+
+function buildRow(join) {
+  const row = document.createElement("tr");
+  row.dataset.store = storeKey(join);
+
+  const cellKey = document.createElement("td");
+  cellKey.innerHTML = '<span class="key"></span><br><span class="sig"></span>';
+  row.appendChild(cellKey);
+
+  const cellValue = document.createElement("td");
+  cellValue.innerHTML = '<span class="val"></span>';
+  row.appendChild(cellValue);
+
+  const cellName = document.createElement("td");
+  const name = document.createElement("input");
+  name.className = "name";
+  name.placeholder = "unnamed";
+  name.addEventListener("change", () => configure(join, { name: name.value }));
+  cellName.appendChild(name);
+  row.appendChild(cellName);
+
+  const cellKind = document.createElement("td");
+  const kind = document.createElement("select");
+  for (const option of state.kinds[join.signal] || []) {
+    kind.add(new Option(option.replace(/_/g, " "), option));
+  }
+  kind.addEventListener("change", () => configure(join, { kind: kind.value }));
+  cellKind.appendChild(kind);
+  row.appendChild(cellKind);
+
+  const cellEnabled = document.createElement("td");
+  const enabled = document.createElement("input");
+  enabled.type = "checkbox";
+  enabled.addEventListener("change", () =>
+    configure(join, { enabled: enabled.checked }));
+  cellEnabled.appendChild(enabled);
+  row.appendChild(cellEnabled);
+
+  const cellWrite = document.createElement("td");
+  cellWrite.className = "write hide-narrow";
+  buildWriteControls(cellWrite, join);
+  row.appendChild(cellWrite);
+
+  const cellSeen = document.createElement("td");
+  cellSeen.className = "muted hide-narrow";
+  row.appendChild(cellSeen);
+
+  row._parts = { cellKey, cellValue, name, kind, enabled, cellSeen };
+  return row;
+}
+
+function buildWriteControls(cell, join) {
+  if (join.signal === "d") {
+    const on = document.createElement("button");
+    on.textContent = "On";
+    on.onclick = () => write(join, { value: true });
+    const off = document.createElement("button");
+    off.textContent = "Off";
+    off.onclick = () => write(join, { value: false });
+    const pulse = document.createElement("button");
+    pulse.textContent = "Pulse";
+    pulse.title = "Press and release, the way a panel button behaves";
+    pulse.onclick = () => write(join, { pulse: true });
+    cell.append(on, off, pulse);
+    return;
+  }
+  const field = document.createElement("input");
+  field.placeholder = join.signal === "a" ? "0-65535" : "text";
+  if (join.signal === "a") { field.type = "number"; field.min = 0; field.max = 65535; }
+  const send = document.createElement("button");
+  send.textContent = "Set";
+  send.onclick = () => write(join, {
+    value: join.signal === "a" ? Number(field.value || 0) : field.value,
+  });
+  cell.append(field, send);
+}
+
+function updateRow(row, join) {
+  const parts = row._parts;
+  parts.cellKey.querySelector(".key").textContent = join.key;
+  parts.cellKey.querySelector(".sig").textContent =
+    (SIGNAL_NAME[join.signal] || join.signal) + " · " + join.processor;
+
+  const value = parts.cellValue.querySelector(".val");
+  value.textContent = formatValue(join);
+  value.className = "val" + (join.signal === "d"
+    ? (join.value ? " on" : " off") : "");
+  value.title = String(join.value ?? "");
+
+  if (document.activeElement !== parts.name) parts.name.value = join.config.name || "";
+  parts.kind.value = join.kind || join.config.kind || "";
+  parts.enabled.checked = !!join.config.enabled;
+  parts.cellSeen.textContent = ago(join.last_seen) + " · " + (join.updates || 0) + "×";
+  row.classList.toggle("fresh", state.fresh.has(storeKey(join)));
+}
+
+function flash(key) {
+  const row = state.rows.get(key);
+  if (!row || !row.isConnected) return;
+  row.classList.remove("flash");
+  void row.offsetWidth;   // restart the animation
+  row.classList.add("flash");
+}
+
+// -- actions --------------------------------------------------------------
+
+async function configure(join, changes) {
+  try {
+    const result = await call("joins/configure", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        processor: join.processor, key: join.key, ...changes,
+      }),
+    });
+    Object.assign(join, result.join);
+    const row = state.rows.get(storeKey(join));
+    if (row) updateRow(row, join);
+    loadStatus();
+  } catch (err) {
+    toast("Could not save " + join.key + ": " + err.message);
+    const row = state.rows.get(storeKey(join));
+    if (row) updateRow(row, join);
+  }
+}
+
+async function write(join, payload) {
+  try {
+    await call("joins/set", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        processor: join.processor, key: join.key, ...payload,
+      }),
+    });
+  } catch (err) {
+    toast("Could not write " + join.key + ": " + err.message);
+  }
+}
+
+// -- loading --------------------------------------------------------------
+
+async function loadKinds() {
+  try {
+    const data = await call("kinds");
+    state.kinds = data.by_signal || state.kinds;
+  } catch (err) {
+    toast("Could not load entity kinds: " + err.message);
+  }
+}
+
+async function loadStatus() {
+  let data;
+  try {
+    data = await call("status");
+  } catch (err) {
+    $("summary").textContent = "Add-on unreachable: " + err.message;
+    return;
+  }
+
+  $("summary").textContent =
+    data.total_joins + " joins discovered · " +
+    data.exposed_joins + " exposed to Home Assistant";
+
+  const container = $("procs");
+  container.replaceChildren();
+  const select = $("f-processor");
+  const chosen = select.value;
+  select.replaceChildren(new Option("All processors", ""));
+
+  for (const proc of data.processors || []) {
+    select.add(new Option(proc.name, proc.name));
+    const card = document.createElement("div");
+    card.className = "proc";
+    const up = proc.registered;
+    const dot = '<span class="dot ' + (up ? "up" : "down") + '"></span>';
+    const detail = up
+      ? (proc.discovery_complete ? "registered" : "registering…")
+      : (proc.last_error || "not connected");
+    card.innerHTML =
+      "<b>" + dot + escapeHtml(proc.name) + "</b>" +
+      '<div class="meta">' + escapeHtml(proc.host) +
+      " · IPID 0x" + proc.ipid.toString(16).toUpperCase().padStart(2, "0") +
+      "</div>" +
+      '<div class="meta">' + escapeHtml(detail) + " · " +
+      proc.stored_joins + " joins</div>";
+    container.appendChild(card);
+  }
+  if (chosen) select.value = chosen;
+}
+
+function escapeHtml(text) {
+  return String(text ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+async function loadJoins() {
+  try {
+    const data = await call("joins");
+    state.joins.clear();
+    state.rows.clear();
+    for (const join of data.joins) state.joins.set(storeKey(join), join);
+    render();
+  } catch (err) {
+    toast("Could not load joins: " + err.message);
+  }
+}
+
+// -- live stream ----------------------------------------------------------
+
+function connectStream() {
+  const stream = new EventSource(api("events"));
+
+  stream.onmessage = (message) => {
+    if (!state.live) return;
+    const event = JSON.parse(message.data);
+    const key = event.processor + "/" + event.key;
+    let join = state.joins.get(key);
+    const isNew = !join;
+    if (isNew) {
+      join = {
+        processor: event.processor, key: event.key, signal: event.signal,
+        number: event.number, config: { name: event.name || "" }, kind: "",
+      };
+      state.joins.set(key, join);
+    }
+    join.value = event.value;
+    join.updates = event.updates;
+    join.last_seen = event.at;
+    state.fresh.add(key);
+
+    const row = state.rows.get(key);
+    if (row && row.isConnected) {
+      updateRow(row, join);
+      flash(key);
+      // Sorting by recency means the row belongs at the top now.
+      if ($("sort").value === "recent") scheduleRender();
+    } else {
+      scheduleRender();
+    }
+    if (isNew) loadStatus();
+  };
+
+  stream.onerror = () => {
+    // EventSource reconnects on its own; the store is the source of truth,
+    // so a refresh on reconnect is enough to catch anything missed.
+    if (stream.readyState === EventSource.CLOSED) setTimeout(connectStream, 3000);
+  };
+}
+
+// -- wiring ---------------------------------------------------------------
+
+for (const id of ["f-processor", "f-signal", "f-only", "sort"]) {
+  $(id).addEventListener("change", render);
+}
+let searchTimer;
+$("search").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(render, 150);
+});
+$("live").addEventListener("change", (event) => { state.live = event.target.checked; });
+$("learn").addEventListener("click", () => {
+  state.fresh.clear();
+  $("sort").value = "recent";
+  render();
+  toast("Highlight cleared — press something on the panel and watch what moves.");
+});
+
+(async function start() {
+  await loadKinds();
+  await loadStatus();
+  await loadJoins();
+  connectStream();
+  setInterval(loadStatus, 15000);
+})();
+</script>
+</body>
+</html>
