@@ -20,6 +20,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from cards import describe as describe_roles, room_card
 from cip_client import CipConnection, SignalType
 from console import Health, read_health
 from join_store import KINDS_FOR_SIGNAL, VALID_KINDS, JoinStore
@@ -349,6 +350,37 @@ async def health(request: web.Request) -> web.Response:
     })
 
 
+async def room_card_endpoint(request: web.Request) -> web.Response:
+    """A room card for one processor, with join keys where entity ids go.
+
+    The role assignment is a guess made from the names on the joins, so
+    the reply carries the working as well as the card.
+    """
+    hub: Hub = request.app["hub"]
+    processor = request.query.get("processor", "")
+    joins = (
+        hub.store.for_processor(processor) if processor
+        else hub.store.exposed()
+    )
+    if processor and not joins:
+        return web.json_response(
+            {"error": f"no joins for {processor}"}, status=404)
+
+    card = room_card(joins, processor)
+    if card is None:
+        return web.json_response(
+            {"error": "no exposed join matched a room role — expose and "
+                      "name joins such as Volume, Mute or Source first"},
+            status=404,
+        )
+    return web.json_response({
+        "card": card,
+        "processor": processor,
+        "keys": sorted(set(card["entities"].values())),
+        **describe_roles(joins),
+    })
+
+
 async def integration_joins(request: web.Request) -> web.Response:
     """What the Home Assistant integration consumes: exposed joins only."""
     hub: Hub = request.app["hub"]
@@ -419,6 +451,7 @@ def build_app(hub: Hub) -> web.Application:
         web.post("/api/rediscover", rediscover),
         web.get("/api/events", events),
         web.get("/api/health", health),
+        web.get("/api/cards/room", room_card_endpoint),
         web.get("/api/integration/joins", integration_joins),
     ])
     if STATIC_DIR.is_dir():

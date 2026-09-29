@@ -10,3 +10,17 @@ rescan:
       required: false
       selector:
         text:
+
+generate_room_card:
+  name: Generate room card
+  description: >-
+    Build a room-controller-card for a processor by matching its exposed
+    joins to room roles by name. Returns the card, its YAML, and what the
+    match decided — check that before trusting it.
+  fields:
+    processor:
+      name: Crestron processor
+      description: Which processor's joins to use. Omit to use all of them.
+      required: false
+      selector:
+        text:
