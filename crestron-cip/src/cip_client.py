@@ -270,6 +270,14 @@ class CipConnection:
                     ctype = self._buf[0]
                     payload = self._buf[3:3 + length]
                     self._buf = self._buf[3 + length:]
+                    # Every frame, verbatim, at debug level. The decoders
+                    # here were reverse-engineered, so when a processor
+                    # sends something they do not understand the only way
+                    # to tell is to see the bytes. Off unless log_level is
+                    # debug, because this is one line per join update and
+                    # some processors send ten a second.
+                    logger.debug("%s <- type=0x%02X len=%d %s",
+                                 self.name, ctype, length, payload.hex())
                     return ctype, payload
             assert self._reader is not None
             try:
@@ -373,6 +381,9 @@ class CipConnection:
         if not self.registered:
             raise RegistrationTimeout(
                 f"No registration result from {self.host} within {timeout:g}s"
+                + (" — the processor accepted the connection but sent nothing,"
+                   " which usually means this IPID is already in use"
+                   if not self._buf and not self.joins else "")
             )
         return self.joins
 
