@@ -92,7 +92,8 @@ def describe(joins: Iterable[Any]) -> dict:
 
 MIXER_CARD = "custom:audio-zone-card"
 MIXER_FACEPLATE = "zone-mixer"
-MAX_STRIPS = 12
+# The faceplate wraps past eight strips a row, so sixteen stays legible.
+MAX_STRIPS = 16
 
 def zone_strips(joins: Iterable[Any], stride: int = 10,
                 start: int = 11) -> list[dict]:
