@@ -20,7 +20,10 @@ from pathlib import Path
 
 from aiohttp import web
 
-from cards import describe as describe_roles, mixer_card, room_card
+from cards import (
+    MIXER_ROLES, describe as describe_roles, mixer_card, parse_roles,
+    room_card,
+)
 from cip_client import CipConnection, SignalType
 from console import Health, read_health
 from join_store import KINDS_FOR_SIGNAL, VALID_KINDS, JoinStore
@@ -455,6 +458,11 @@ async def room_card_endpoint(request: web.Request) -> web.Response:
     })
 
 
+async def mixer_roles(request: web.Request) -> web.Response:
+    """The per-channel properties a mixer card can carry."""
+    return web.json_response({"roles": list(MIXER_ROLES)})
+
+
 async def mixer_card_endpoint(request: web.Request) -> web.Response:
     """A zone-mixer card for a processor's zones, with join keys in place
     of entity ids — the integration substitutes those."""
@@ -462,11 +470,17 @@ async def mixer_card_endpoint(request: web.Request) -> web.Response:
     processor = request.query.get("processor", "")
     joins = (hub.store.for_processor(processor) if processor
              else hub.store.exposed())
+    try:
+        roles = parse_roles(request.query.get("roles", ""))
+    except ValueError as err:
+        raise web.HTTPBadRequest(reason=str(err))
     card, omitted = mixer_card(
         joins,
-        title=processor or "Zone Mixer",
+        title=request.query.get("title") or processor or "Zone Mixer",
         stride=int(request.query.get("stride", 10)),
         start=int(request.query.get("start", 11)),
+        roles=roles,
+        per_row=int(request.query.get("per_row", 8)),
     )
     if card is None:
         return web.json_response(
@@ -559,6 +573,7 @@ def build_app(hub: Hub) -> web.Application:
         web.get("/api/health", health),
         web.get("/api/cards/room", room_card_endpoint),
         web.get("/api/cards/mixer", mixer_card_endpoint),
+        web.get("/api/cards/mixer/roles", mixer_roles),
         web.get("/api/integration/joins", integration_joins),
     ])
     if STATIC_DIR.is_dir():

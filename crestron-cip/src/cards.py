@@ -95,14 +95,53 @@ MIXER_FACEPLATE = "zone-mixer"
 # The faceplate wraps past eight strips a row, so sixteen stays legible.
 MAX_STRIPS = 16
 
-def zone_strips(joins: Iterable[Any], stride: int = 10,
-                start: int = 11) -> list[dict]:
+# Which card role each per-channel property fills, as signal + offset
+# from the zone's base join. This is the default for a Crestron subpage
+# reference list; the GUI lets it be changed, because no two programs
+# lay a strip out the same way.
+DEFAULT_ROLES = (
+    ("volume", "a", 0),
+    ("mute", "d", 0),
+)
+
+# Roles the zone-mixer faceplate understands, offered in the picker.
+MIXER_ROLES = (
+    "volume", "mute", "source", "balance",
+    "eq_low", "eq_mid", "eq_high",
+)
+
+
+def parse_roles(spec: str) -> list[tuple[str, str, int]]:
+    """Parse `volume:a:0,mute:d:0` into (role, signal, offset) triples."""
+    if not spec:
+        return list(DEFAULT_ROLES)
+    out: list[tuple[str, str, int]] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        bits = part.split(":")
+        if len(bits) != 3:
+            raise ValueError(f"bad role {part!r}; expected role:signal:offset")
+        role, signal, offset = bits[0].strip(), bits[1].strip(), bits[2].strip()
+        if role not in MIXER_ROLES:
+            raise ValueError(f"unknown role {role!r}")
+        if signal not in ("d", "a", "s"):
+            raise ValueError(f"unknown signal {signal!r}")
+        out.append((role, signal, int(offset)))
+    return out
+
+
+def zone_strips(joins: Iterable[Any], stride: int = 10, start: int = 11,
+                roles: list[tuple[str, str, int]] | None = None) -> list[dict]:
     """The zones a processor exposes, derived from its join layout.
 
-    Item N occupies `start + (N-1)*stride` upward: the first serial is
-    the zone's label, the first analog its volume, the first digital its
-    mute, and the next three digitals the source selects.
+    Item N occupies `start + (N-1)*stride` upward, and the first serial
+    in each block is the zone's label. What else a strip carries is the
+    caller's decision, because a Crestron program lays one out however
+    its author chose.
     """
+    roles = roles or list(DEFAULT_ROLES)
     by_number: dict[tuple[str, int], Any] = {
         (j.signal, j.number): j for j in joins if j.config.enabled
     }
@@ -114,29 +153,34 @@ def zone_strips(joins: Iterable[Any], stride: int = 10,
     strips = []
     for base in bases:
         label = by_number.get(("s", base))
-        volume = by_number.get(("a", base))
-        if label is None and volume is None:
+        found = {
+            role: getattr(by_number.get((signal, base + offset)), "key", None)
+            for role, signal, offset in roles
+        }
+        if label is None and not any(found.values()):
             continue
         strips.append({
             "base": base,
             "name": str(getattr(label, "value", "") or "").strip()
                     or f"Zone {1 + (base - start) // stride}",
-            "volume": getattr(volume, "key", None),
-            "mute": getattr(by_number.get(("d", base)), "key", None),
-            "sources": [
-                getattr(by_number.get(("d", base + n)), "key", None)
-                for n in (1, 2, 3)
-            ],
+            "roles": {k: v for k, v in found.items() if v},
         })
     return strips
 
 
 def mixer_card(joins: Iterable[Any], title: str = "",
-               stride: int = 10, start: int = 11) -> tuple[dict | None, list[str]]:
-    """A zone-mixer card for a processor's zones, and what was left out."""
-    strips = zone_strips(joins, stride=stride, start=start)
-    usable = [s for s in strips if s["volume"]]
-    omitted = [s["name"] for s in strips if not s["volume"]]
+               stride: int = 10, start: int = 11,
+               roles: list[tuple[str, str, int]] | None = None,
+               per_row: int = 8,
+               ) -> tuple[dict | None, list[str]]:
+    """A zone-mixer card for a processor's zones, and what was left out.
+
+    A strip needs at least one bound property to be worth drawing; a
+    column of empty controls reads as a fault rather than a quiet zone.
+    """
+    strips = zone_strips(joins, stride=stride, start=start, roles=roles)
+    usable = [s for s in strips if s["roles"]]
+    omitted = [s["name"] for s in strips if not s["roles"]]
     chosen, over = usable[:MAX_STRIPS], usable[MAX_STRIPS:]
     omitted += [s["name"] for s in over]
     if not chosen:
@@ -146,15 +190,17 @@ def mixer_card(joins: Iterable[Any], title: str = "",
     labels: dict[str, str] = {}
     for index, strip in enumerate(chosen, start=1):
         labels[f"zone{index}"] = strip["name"]
-        entities[f"zone{index}_volume"] = strip["volume"]
-        if strip["mute"]:
-            entities[f"zone{index}_mute"] = strip["mute"]
+        for role, key in strip["roles"].items():
+            entities[f"zone{index}_{role}"] = key
 
+    eq_on = any(r.startswith("eq_") for _, strip in enumerate(chosen)
+                for r in strip["roles"])
     card = {
         "type": MIXER_CARD,
         "faceplate": MIXER_FACEPLATE,
         "title": title or "Zone Mixer",
-        "options": {"zones": len(chosen), "eq": 0},
+        "options": {"zones": len(chosen), "eq": 1 if eq_on else 0,
+                    "per_row": max(1, min(len(chosen), per_row))},
         "labels": labels,
         "entities": entities,
     }

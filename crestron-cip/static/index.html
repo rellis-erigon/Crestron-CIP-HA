@@ -85,6 +85,18 @@ tr.fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   .hide-narrow { display: none; }
   .wrap, .bar, .procs, header { padding-left: 10px; padding-right: 10px; }
 }
+  .panel { border:1px solid var(--line); border-radius:8px; padding:14px 16px;
+           margin:0 0 12px; background:var(--panel); }
+  .panel h3 { margin:0 0 4px; font-size:15px; }
+  .panel .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+                margin-top:10px; }
+  .panel label { display:flex; gap:6px; align-items:center; font-size:13px; }
+  .panel input[type=number] { width:70px; }
+  table.roles { width:100%; border-collapse:collapse; margin-top:8px; }
+  table.roles td { padding:3px 8px 3px 0; }
+  table.roles td:first-child { width:28px; }
+  #m-out { width:100%; margin-top:10px; font-family:ui-monospace,monospace;
+           font-size:12px; }
 </style>
 </head>
 <body>
@@ -131,6 +143,30 @@ tr.fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   <button id="bulk-group-apply">Set group</button>
   <span class="spacer"></span>
   <button id="bulk-clear">Clear</button>
+</div>
+
+<!-- Choosing what a channel carries. No two Crestron programs lay a
+     zone strip out the same way, so the offsets are the user's to set. -->
+<div class="panel" id="mixerpanel" hidden>
+  <h3>Build mixer</h3>
+  <p class="muted">
+    A zone sits at <em>start + (N&minus;1) &times; stride</em>. Tick what each
+    channel carries and where it sits relative to the zone's first join.
+  </p>
+  <table class="roles"><tbody id="rolerows"></tbody></table>
+  <div class="row">
+    <label>Start <input id="m-start" type="number" value="11" min="0"></label>
+    <label>Stride <input id="m-stride" type="number" value="10" min="1"></label>
+    <label>Per row <input id="m-perrow" type="number" value="8" min="1" max="16"></label>
+    <label>Title <input id="m-title" placeholder="Zone Mixer"></label>
+  </div>
+  <div class="row">
+    <button id="m-build">Build</button>
+    <button id="m-close">Close</button>
+    <span class="spacer"></span>
+    <span class="muted" id="m-result"></span>
+  </div>
+  <textarea id="m-out" rows="10" hidden readonly></textarea>
 </div>
 
 <div class="wrap">
@@ -682,22 +718,90 @@ $("autogroup").addEventListener("click", async () => {
   }
 });
 
+// Sensible starting points for a Crestron subpage reference list. The
+// user changes them; nothing here is guessed at build time.
+const ROLE_DEFAULTS = {
+  volume:  { on: true,  signal: "a", offset: 0 },
+  mute:    { on: true,  signal: "d", offset: 0 },
+  source:  { on: false, signal: "s", offset: 1 },
+  balance: { on: false, signal: "a", offset: 1 },
+  eq_low:  { on: false, signal: "a", offset: 2 },
+  eq_mid:  { on: false, signal: "a", offset: 3 },
+  eq_high: { on: false, signal: "a", offset: 4 },
+};
+
+async function buildRoleRows() {
+  const body = $("rolerows");
+  if (body.childElementCount) return;
+  const { roles } = await call("/api/cards/mixer/roles");
+  for (const role of roles) {
+    const preset = ROLE_DEFAULTS[role] || { on: false, signal: "a", offset: 0 };
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td><input type="checkbox" data-role="${role}" ${preset.on ? "checked" : ""}></td>` +
+      `<td>${role.replace(/_/g, " ")}</td>` +
+      `<td><select data-signal="${role}">` +
+        ["d", "a", "s"].map((sig) =>
+          `<option value="${sig}"${sig === preset.signal ? " selected" : ""}>` +
+          `${SIGNAL_NAME[sig] || sig}</option>`).join("") +
+      `</select></td>` +
+      `<td><label>offset <input type="number" data-offset="${role}" ` +
+        `value="${preset.offset}" min="0" max="99"></label></td>`;
+    body.appendChild(tr);
+  }
+}
+
+function roleSpec() {
+  const parts = [];
+  for (const box of document.querySelectorAll("#rolerows [data-role]")) {
+    if (!box.checked) continue;
+    const role = box.dataset.role;
+    const signal = document.querySelector(`[data-signal="${role}"]`).value;
+    const offset = document.querySelector(`[data-offset="${role}"]`).value || "0";
+    parts.push(`${role}:${signal}:${offset}`);
+  }
+  return parts.join(",");
+}
+
 $("mixer").addEventListener("click", async () => {
-  const processor = $("f-processor").value;
-  const button = $("mixer");
+  await buildRoleRows();
+  const panel = $("mixerpanel");
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+});
+
+$("m-close").addEventListener("click", () => { $("mixerpanel").hidden = true; });
+
+$("m-build").addEventListener("click", async () => {
+  const spec = roleSpec();
+  if (!spec) {
+    toast("Tick at least one property for a channel to carry.");
+    return;
+  }
+  const button = $("m-build");
   button.disabled = true;
   try {
-    const query = processor ? "?processor=" + encodeURIComponent(processor) : "";
-    const result = await call("/api/cards/mixer" + query);
-    const yaml = JSON.stringify(result.card, null, 2);
-    await navigator.clipboard?.writeText(yaml).catch(() => {});
-    toast(`Mixer built: ${Object.keys(result.card.labels).length} zones`
+    const query = new URLSearchParams({
+      processor: $("f-processor").value || "",
+      roles: spec,
+      start: $("m-start").value || "11",
+      stride: $("m-stride").value || "10",
+      per_row: $("m-perrow").value || "8",
+      title: $("m-title").value || "",
+    });
+    const result = await call("/api/cards/mixer?" + query.toString());
+    const text = JSON.stringify(result.card, null, 2);
+    const out = $("m-out");
+    out.value = text;
+    out.hidden = false;
+    await navigator.clipboard?.writeText(text).catch(() => {});
+    $("m-result").textContent =
+      `${Object.keys(result.card.labels).length} channels`
       + (result.omitted_zones.length
-         ? ` (${result.omitted_zones.length} without a volume left out)` : "")
-      + " — copied to the clipboard.");
-    console.log(yaml);
+         ? ` · ${result.omitted_zones.length} skipped (nothing bound)` : "")
+      + " · copied";
   } catch (err) {
-    toast("Mixer failed: " + err.message);
+    $("m-result").textContent = "failed: " + err.message;
   } finally {
     button.disabled = false;
   }
