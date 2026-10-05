@@ -128,9 +128,53 @@ def decode_analog(payload: bytes) -> tuple[int, int]:
     return join, value
 
 
+# Markers seen in the wild. 0x14 and 0x34 introduce a single analog or
+# serial value; 0x38 and 0x39 wrap the same thing in a Smart Object
+# envelope, which is what a subpage reference list sends.
+MARK_ANALOG = 0x14
+MARK_SERIAL = 0x34
+MARK_ARRAY = 0x38
+MARK_WRAPPED = 0x39
+
+
 def decode_serial(payload: bytes) -> tuple[int, str]:
+    """Decode a serial update, plain or Smart Object wrapped.
+
+    A plain update is `00 00 LL 34 <join:2> 03 <text>`.
+
+    A Smart Object update wraps that: `00 00 LL 39 00 00 00 01 00 ll 34
+    <join:2> 03 <text>`. The outer bytes where the plain format keeps its
+    join number are zero, so reading the join from a fixed offset made
+    every item on a sixteen-zone list arrive as join 1, each overwriting
+    the last. That is exactly what happened here: a whole BGM system
+    looked like one join called "Music Player 3".
+    """
+    # Analog frames carry a one-byte length and the marker at [3];
+    # serial frames carry two, putting their marker at [4].
+    if (len(payload) > 15 and payload[4] == MARK_WRAPPED
+            and payload[11] == MARK_SERIAL):
+        join = ((payload[12] << 8) | payload[13]) + 1
+        return join, payload[15:].decode("utf-8", "replace")
     join = ((payload[5] << 8) | payload[6]) + 1
     return join, payload[8:].decode("utf-8", "replace")
+
+
+def decode_analog_array(payload: bytes) -> list[tuple[int, int]]:
+    """Decode a Smart Object analog array, or return [] if it is not one.
+
+    `00 00 LL 38 00 00 00 01 ll 14 (<join:2><value:2>)*` — one frame
+    carrying every item's value at once, which is how a subpage
+    reference list reports sixteen zone volumes in a single update.
+    """
+    if len(payload) < 14 or payload[3] != MARK_ARRAY or payload[9] != MARK_ANALOG:
+        return []
+    body = payload[10:]
+    out: list[tuple[int, int]] = []
+    for index in range(0, len(body) - 3, 4):
+        join = ((body[index] << 8) | body[index + 1]) + 1
+        value = (body[index + 2] << 8) | body[index + 3]
+        out.append((join, value))
+    return out
 
 
 def encode_digital(join: int, state: bool) -> bytes:
@@ -342,6 +386,15 @@ class CipConnection:
             return
 
         subtype = payload[3]
+        # A Smart Object reports every item in one frame — sixteen zone
+        # volumes in a single update — so this is checked before the
+        # single-value decoders, which would misread it as one join.
+        array = decode_analog_array(payload)
+        if array:
+            for number, value in array:
+                self._record(SignalType.ANALOG, number, value)
+            return
+
         if subtype == DATA_DIGITAL:
             number, state = decode_digital(payload)
             self._record(SignalType.DIGITAL, number, state)

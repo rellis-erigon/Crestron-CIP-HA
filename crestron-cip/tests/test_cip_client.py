@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from cip_client import (  # noqa: E402
     REG_NOT_DEFINED, REG_SUCCESS, REQUEST_UPDATE,
     CipConnection, RegistrationError, SignalType,
-    decode_analog, decode_digital, decode_serial,
+    decode_analog, decode_analog_array, decode_digital, decode_serial,
     encode_analog, encode_digital, encode_serial,
     payload_of, probe_ipid,
 )
@@ -296,3 +296,49 @@ def test_a_refused_ipid_is_retried_rarely_rather_than_never():
     from cip_client import REFUSED_RETRY
 
     assert REFUSED_RETRY >= 600
+
+
+# -- Smart Object frames -------------------------------------------------
+#
+# A subpage reference list reports its items inside an envelope. Decoding
+# those as plain frames made an entire sixteen-zone BGM system arrive as
+# a single join called "Music Player 3", each item overwriting the last.
+
+def test_plain_serial_still_decodes():
+    payload = bytes.fromhex("000000123403eb034f72636861726420526f6f6d2031")
+    assert decode_serial(payload) == (1004, "Orchard Room 1")
+
+
+def test_wrapped_serial_carries_its_own_join():
+    payload = bytes.fromhex(
+        "000000193900000001001234008c034f7263686172642032")
+    number, text = decode_serial(payload)
+    assert (number, text) == (141, "Orchard 2")
+
+
+def test_wrapped_serial_of_a_different_length():
+    payload = bytes.fromhex(
+        "000000143900000001000d34006e035472616d7761792031")
+    assert decode_serial(payload) == (111, "Tramway 1")
+
+
+def test_analog_array_yields_every_item():
+    payload = bytes.fromhex(
+        "00004338000000013d14000a3d7000142e14001e7fff00282666003228f5"
+        "003c0a3d00464f5b0050851e005a47ad00643fff006eee13007823d60082"
+        "ab84008c75c200a030a3")
+    rows = decode_analog_array(payload)
+    assert len(rows) == 15
+    assert rows[0] == (11, 15728)
+    assert rows[-1] == (161, 12451)
+    # Zones are ten apart, which is what StartJoinNumber=11 with an
+    # increment of 10 produces.
+    assert all((join - 1) % 10 == 0 for join, _ in rows)
+
+
+def test_a_plain_analog_is_not_mistaken_for_an_array():
+    assert decode_analog_array(bytes.fromhex("0000051482130001")) == []
+
+
+def test_a_plain_analog_still_decodes():
+    assert decode_analog(bytes.fromhex("0000051482130001")) == (33300, 1)
