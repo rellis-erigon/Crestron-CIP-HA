@@ -795,10 +795,16 @@ $("m-build").addEventListener("click", async () => {
     out.value = text;
     out.hidden = false;
     await navigator.clipboard?.writeText(text).catch(() => {});
+    const notes = [];
+    if (result.unbound_zones.length) {
+      notes.push(`${result.unbound_zones.length} with nothing bound`);
+    }
+    if (result.over_cap_zones.length) {
+      notes.push(`${result.over_cap_zones.length} over the card's limit`);
+    }
     $("m-result").textContent =
       `${Object.keys(result.card.labels).length} channels`
-      + (result.omitted_zones.length
-         ? ` · ${result.omitted_zones.length} skipped (nothing bound)` : "")
+      + (notes.length ? " · " + notes.join(", ") : "")
       + " · copied";
   } catch (err) {
     $("m-result").textContent = "failed: " + err.message;

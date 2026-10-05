@@ -136,4 +136,16 @@ def test_a_strip_with_nothing_bound_is_reported_not_drawn():
     zone(rows, 2, "Gym")
     card, omitted = cards.mixer_card(rows, roles=cards.parse_roles("volume:a:0"))
     assert list(card["labels"].values()) == ["Alfesco"]
-    assert omitted == ["Gym"]
+    assert omitted["unbound"] == ["Gym"]
+    assert omitted["over_cap"] == []
+
+
+def test_over_the_cap_is_not_reported_as_unbound():
+    """Two different problems with two different fixes."""
+    rows = []
+    for n in range(1, cards.MAX_STRIPS + 3):
+        zone(rows, n, f"Zone {n}", a0="vol")
+    card, omitted = cards.mixer_card(rows, roles=cards.parse_roles("volume:a:0"))
+    assert len(card["labels"]) == cards.MAX_STRIPS
+    assert omitted["unbound"] == []
+    assert len(omitted["over_cap"]) == 2

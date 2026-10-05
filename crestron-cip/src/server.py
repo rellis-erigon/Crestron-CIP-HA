@@ -484,15 +484,16 @@ async def mixer_card_endpoint(request: web.Request) -> web.Response:
     )
     if card is None:
         return web.json_response(
-            {"error": "no zones with a volume are exposed — expose the "
-                      "joins and group them first"},
+            {"error": "no zone has any of the chosen properties bound — "
+                      "expose those joins first"},
             status=404,
         )
     return web.json_response({
         "card": card,
         "processor": processor,
         "keys": sorted(set(card["entities"].values())),
-        "omitted_zones": omitted,
+        "unbound_zones": omitted["unbound"],
+        "over_cap_zones": omitted["over_cap"],
     })
 
 

@@ -172,7 +172,7 @@ def mixer_card(joins: Iterable[Any], title: str = "",
                stride: int = 10, start: int = 11,
                roles: list[tuple[str, str, int]] | None = None,
                per_row: int = 8,
-               ) -> tuple[dict | None, list[str]]:
+               ) -> tuple[dict | None, dict[str, list[str]]]:
     """A zone-mixer card for a processor's zones, and what was left out.
 
     A strip needs at least one bound property to be worth drawing; a
@@ -180,11 +180,15 @@ def mixer_card(joins: Iterable[Any], title: str = "",
     """
     strips = zone_strips(joins, stride=stride, start=start, roles=roles)
     usable = [s for s in strips if s["roles"]]
-    omitted = [s["name"] for s in strips if not s["roles"]]
+    # Kept apart on purpose. "Nothing is bound to this zone" and "this
+    # zone did not fit on the card" are different problems with
+    # different fixes, and reporting them as one list said four zones
+    # had no volume when three of them simply overflowed.
+    unbound = [s["name"] for s in strips if not s["roles"]]
     chosen, over = usable[:MAX_STRIPS], usable[MAX_STRIPS:]
-    omitted += [s["name"] for s in over]
+    over_cap = [s["name"] for s in over]
     if not chosen:
-        return None, omitted
+        return None, {"unbound": unbound, "over_cap": over_cap}
 
     entities: dict[str, str] = {}
     labels: dict[str, str] = {}
@@ -204,4 +208,4 @@ def mixer_card(joins: Iterable[Any], title: str = "",
         "labels": labels,
         "entities": entities,
     }
-    return card, omitted
+    return card, {"unbound": unbound, "over_cap": over_cap}
