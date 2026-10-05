@@ -86,3 +86,75 @@ def describe(joins: Iterable[Any]) -> dict:
             {"key": j.key, "name": _name_of(j)} for j in leftovers
         ],
     }
+
+
+# -- Zone mixer ----------------------------------------------------------
+
+MIXER_CARD = "custom:audio-zone-card"
+MIXER_FACEPLATE = "zone-mixer"
+MAX_STRIPS = 12
+
+def zone_strips(joins: Iterable[Any], stride: int = 10,
+                start: int = 11) -> list[dict]:
+    """The zones a processor exposes, derived from its join layout.
+
+    Item N occupies `start + (N-1)*stride` upward: the first serial is
+    the zone's label, the first analog its volume, the first digital its
+    mute, and the next three digitals the source selects.
+    """
+    by_number: dict[tuple[str, int], Any] = {
+        (j.signal, j.number): j for j in joins if j.config.enabled
+    }
+    bases = sorted({
+        number for signal, number in by_number
+        if number >= start and (number - start) % stride == 0
+    })
+
+    strips = []
+    for base in bases:
+        label = by_number.get(("s", base))
+        volume = by_number.get(("a", base))
+        if label is None and volume is None:
+            continue
+        strips.append({
+            "base": base,
+            "name": str(getattr(label, "value", "") or "").strip()
+                    or f"Zone {1 + (base - start) // stride}",
+            "volume": getattr(volume, "key", None),
+            "mute": getattr(by_number.get(("d", base)), "key", None),
+            "sources": [
+                getattr(by_number.get(("d", base + n)), "key", None)
+                for n in (1, 2, 3)
+            ],
+        })
+    return strips
+
+
+def mixer_card(joins: Iterable[Any], title: str = "",
+               stride: int = 10, start: int = 11) -> tuple[dict | None, list[str]]:
+    """A zone-mixer card for a processor's zones, and what was left out."""
+    strips = zone_strips(joins, stride=stride, start=start)
+    usable = [s for s in strips if s["volume"]]
+    omitted = [s["name"] for s in strips if not s["volume"]]
+    chosen, over = usable[:MAX_STRIPS], usable[MAX_STRIPS:]
+    omitted += [s["name"] for s in over]
+    if not chosen:
+        return None, omitted
+
+    entities: dict[str, str] = {}
+    labels: dict[str, str] = {}
+    for index, strip in enumerate(chosen, start=1):
+        labels[f"zone{index}"] = strip["name"]
+        entities[f"zone{index}_volume"] = strip["volume"]
+        if strip["mute"]:
+            entities[f"zone{index}_mute"] = strip["mute"]
+
+    card = {
+        "type": MIXER_CARD,
+        "faceplate": MIXER_FACEPLATE,
+        "title": title or "Zone Mixer",
+        "options": {"zones": len(chosen), "eq": 0},
+        "labels": labels,
+        "entities": entities,
+    }
+    return card, omitted

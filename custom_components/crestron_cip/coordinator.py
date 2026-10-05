@@ -44,6 +44,10 @@ class JoinData:
     unit: str = ""
     device_class: str = ""
     scale: float = 1.0
+    precision: int | None = None
+    # The Home Assistant device this join belongs to. CIP has no notion
+    # of one, so the add-on carries the decision and this follows it.
+    group: str = ""
     available: bool = True
 
     @property
@@ -63,6 +67,9 @@ class JoinData:
             unit=data.get("unit") or "",
             device_class=data.get("device_class") or "",
             scale=float(data.get("scale") or 1.0),
+            precision=(None if data.get("precision") in (None, "")
+                       else int(data["precision"])),
+            group=data.get("group") or data["processor"],
             available=bool(data.get("available", True)),
         )
 

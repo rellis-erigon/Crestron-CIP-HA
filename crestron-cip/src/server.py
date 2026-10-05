@@ -20,7 +20,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-from cards import describe as describe_roles, room_card
+from cards import describe as describe_roles, mixer_card, room_card
 from cip_client import CipConnection, SignalType
 from console import Health, read_health
 from join_store import KINDS_FOR_SIGNAL, VALID_KINDS, JoinStore
@@ -160,8 +160,11 @@ def _join_payload(join) -> dict:
         "unit": join.config.unit,
         "device_class": join.config.device_class,
         "scale": join.config.scale,
+        "precision": join.config.precision,
+        "group": join.config.group,
         "notes": join.config.notes,
     }
+    data["resolved_group"] = join.config.resolved_group(join.processor)
     return data
 
 
@@ -224,7 +227,8 @@ async def configure_join(request: web.Request) -> web.Response:
 
     changes = {
         k: body[k] for k in
-        ("name", "kind", "enabled", "unit", "device_class", "scale", "notes")
+        ("name", "kind", "enabled", "unit", "device_class", "scale",
+         "notes", "group", "precision")
         if k in body
     }
     try:
@@ -235,6 +239,76 @@ async def configure_join(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(reason=str(err))
     hub.store.save()
     return web.json_response({"ok": True, "join": _join_payload(join)})
+
+
+async def bulk_configure(request: web.Request) -> web.Response:
+    """Apply one set of changes to many joins.
+
+    Eighty joins is too many to click through one at a time, which is
+    the same reason the Q-SYS bridge grew this.
+    """
+    hub: Hub = request.app["hub"]
+    body = await request.json()
+    processor = (body.get("processor") or "").strip()
+    keys = body.get("keys") or []
+    if not processor or not isinstance(keys, list) or not keys:
+        raise web.HTTPBadRequest(reason="processor and a list of keys are required")
+
+    changes = {
+        k: body[k] for k in
+        ("name", "kind", "enabled", "unit", "device_class", "scale",
+         "notes", "group", "precision")
+        if k in body
+    }
+    if not changes:
+        raise web.HTTPBadRequest(reason="nothing to change")
+
+    done, failed = hub.store.bulk_configure(processor, keys, **changes)
+    hub.store.save()
+    return web.json_response({"ok": True, "changed": done, "errors": failed})
+
+
+async def autogroup(request: web.Request) -> web.Response:
+    """Derive one device per item from a repeating join layout."""
+    hub: Hub = request.app["hub"]
+    body = await request.json()
+    processor = (body.get("processor") or "").strip()
+    if not processor:
+        raise web.HTTPBadRequest(reason="processor is required")
+    try:
+        assigned = hub.store.autogroup(
+            processor,
+            stride=int(body.get("stride", 10)),
+            start=int(body.get("start", 11)),
+        )
+    except ValueError as err:
+        raise web.HTTPBadRequest(reason=str(err))
+    hub.store.save()
+    groups = sorted(set(assigned.values()))
+    return web.json_response({
+        "ok": True, "joins": len(assigned),
+        "groups": groups, "group_count": len(groups),
+    })
+
+
+async def list_groups(request: web.Request) -> web.Response:
+    """The devices these joins will appear as in Home Assistant."""
+    hub: Hub = request.app["hub"]
+    processor = request.query.get("processor", "")
+    rows = (hub.store.for_processor(processor) if processor
+            else list(hub.store.joins.values()))
+    groups: dict[str, dict] = {}
+    for join in rows:
+        name = join.config.resolved_group(join.processor)
+        entry = groups.setdefault(
+            name, {"name": name, "processor": join.processor,
+                   "joins": 0, "exposed": 0})
+        entry["joins"] += 1
+        if join.config.enabled:
+            entry["exposed"] += 1
+    return web.json_response({
+        "groups": sorted(groups.values(), key=lambda g: g["name"].casefold())
+    })
 
 
 async def set_join(request: web.Request) -> web.Response:
@@ -381,6 +455,33 @@ async def room_card_endpoint(request: web.Request) -> web.Response:
     })
 
 
+async def mixer_card_endpoint(request: web.Request) -> web.Response:
+    """A zone-mixer card for a processor's zones, with join keys in place
+    of entity ids — the integration substitutes those."""
+    hub: Hub = request.app["hub"]
+    processor = request.query.get("processor", "")
+    joins = (hub.store.for_processor(processor) if processor
+             else hub.store.exposed())
+    card, omitted = mixer_card(
+        joins,
+        title=processor or "Zone Mixer",
+        stride=int(request.query.get("stride", 10)),
+        start=int(request.query.get("start", 11)),
+    )
+    if card is None:
+        return web.json_response(
+            {"error": "no zones with a volume are exposed — expose the "
+                      "joins and group them first"},
+            status=404,
+        )
+    return web.json_response({
+        "card": card,
+        "processor": processor,
+        "keys": sorted(set(card["entities"].values())),
+        "omitted_zones": omitted,
+    })
+
+
 async def integration_joins(request: web.Request) -> web.Response:
     """What the Home Assistant integration consumes: exposed joins only."""
     hub: Hub = request.app["hub"]
@@ -397,6 +498,8 @@ async def integration_joins(request: web.Request) -> web.Response:
                 "unit": j.config.unit,
                 "device_class": j.config.device_class,
                 "scale": j.config.scale,
+                "precision": j.config.precision,
+                "group": j.config.resolved_group(j.processor),
                 "available": bool(
                     hub.connections.get(j.processor)
                     and hub.connections[j.processor].registered
@@ -447,11 +550,15 @@ def build_app(hub: Hub) -> web.Application:
         web.get("/api/kinds", kinds),
         web.get("/api/joins", list_joins),
         web.post("/api/joins/configure", configure_join),
+        web.post("/api/joins/bulk", bulk_configure),
+        web.post("/api/joins/autogroup", autogroup),
+        web.get("/api/groups", list_groups),
         web.post("/api/joins/set", set_join),
         web.post("/api/rediscover", rediscover),
         web.get("/api/events", events),
         web.get("/api/health", health),
         web.get("/api/cards/room", room_card_endpoint),
+        web.get("/api/cards/mixer", mixer_card_endpoint),
         web.get("/api/integration/joins", integration_joins),
     ])
     if STATIC_DIR.is_dir():

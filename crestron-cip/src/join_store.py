@@ -62,15 +62,28 @@ class JoinConfig:
     name: str = ""
     kind: str = ""
     enabled: bool = False
+    # Which Home Assistant device this join belongs to. CIP has no notion
+    # of a device — a processor exposes numbered joins and nothing else —
+    # so without this every join on a processor lands in one device. A
+    # BGM system with sixteen zones needs sixteen.
+    group: str = ""
     unit: str = ""
     device_class: str = ""
     # Analog joins are 0-65535 on the wire but often mean 0-100%, so a scale
     # is kept rather than baking the conversion into the entity.
     scale: float = 1.0
+    # Digits shown in Home Assistant. A scaled analog is otherwise a
+    # reading like 0.00152590218966964 %, which is not a number anyone
+    # can use.
+    precision: int | None = None
     notes: str = ""
 
     def resolved_kind(self, signal: str) -> str:
         return self.kind or DEFAULT_KIND.get(signal, KIND_SENSOR)
+
+    def resolved_group(self, processor: str) -> str:
+        """The device this join appears under; the processor by default."""
+        return self.group or processor
 
 
 @dataclass
@@ -132,6 +145,8 @@ class JoinStore:
                         name=cfg.get("name", ""),
                         kind=cfg.get("kind", ""),
                         enabled=bool(cfg.get("enabled", False)),
+                        group=cfg.get("group", ""),
+                        precision=cfg.get("precision"),
                         unit=cfg.get("unit", ""),
                         device_class=cfg.get("device_class", ""),
                         scale=float(cfg.get("scale", 1.0) or 1.0),
@@ -207,11 +222,14 @@ class JoinStore:
                 )
             join.config.kind = kind
 
-        for field_name in ("name", "unit", "device_class", "notes"):
+        for field_name in ("name", "unit", "device_class", "notes", "group"):
             if field_name in changes:
                 setattr(join.config, field_name, str(changes[field_name]).strip())
         if "enabled" in changes:
             join.config.enabled = bool(changes["enabled"])
+        if "precision" in changes:
+            value = changes["precision"]
+            join.config.precision = None if value in (None, "") else int(value)
         if "scale" in changes and changes["scale"] not in (None, ""):
             scale = float(changes["scale"])
             if scale == 0:
@@ -220,6 +238,55 @@ class JoinStore:
 
         self._dirty = True
         return join
+
+    def bulk_configure(self, processor: str, keys: list[str],
+                       **changes) -> tuple[int, list[str]]:
+        """Apply the same changes to many joins. Returns (done, failures)."""
+        done, failed = 0, []
+        for join_key in keys:
+            try:
+                self.configure(processor, join_key, **changes)
+                done += 1
+            except (KeyError, ValueError) as err:
+                failed.append(f"{join_key}: {err}")
+        return done, failed
+
+    def autogroup(self, processor: str, stride: int = 10,
+                  start: int = 11) -> dict[str, str]:
+        """Group a repeating join layout into one device per item.
+
+        A Crestron subpage reference list numbers its items at a fixed
+        stride — item N occupying `start + (N-1)*stride` upward — and the
+        first serial in each block is the item's own label. That is
+        enough to derive the devices without anyone naming eighty joins
+        by hand.
+
+        Returns {join key: group}. Joins outside the pattern are left
+        alone rather than swept into a guess.
+        """
+        if stride < 1:
+            raise ValueError("stride must be at least 1")
+
+        rows = self.for_processor(processor)
+        labels: dict[int, str] = {}
+        for join in rows:
+            if join.signal != "s" or join.number < start:
+                continue
+            if (join.number - start) % stride:
+                continue
+            text = str(join.value or "").strip()
+            if text:
+                labels[join.number] = text
+
+        assigned: dict[str, str] = {}
+        for base, label in labels.items():
+            for join in rows:
+                if base <= join.number < base + stride:
+                    join.config.group = label
+                    assigned[join.key] = label
+        if assigned:
+            self._dirty = True
+        return assigned
 
     # -- queries ---------------------------------------------------------
 

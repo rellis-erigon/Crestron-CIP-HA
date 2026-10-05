@@ -117,15 +117,31 @@ tr.fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   <label class="chk"><input type="checkbox" id="live" checked> Live</label>
   <button id="learn" title="Clear the highlight, then press something on the panel">Watch for changes</button>
   <button id="rescan" title="Ask every processor to dump its joins again">Re-scan joins</button>
+  <button id="autogroup" title="Derive one device per zone from the join layout">Build device groups</button>
+  <button id="mixer" title="Build a zone-mixer card from the grouped zones">Build mixer</button>
+</div>
+
+<!-- Appears only when rows are ticked. Eighty joins is too many to set
+     one at a time, which is the whole reason this exists. -->
+<div class="bar" id="bulkbar" hidden>
+  <strong><span id="bulkcount">0</span> selected</strong>
+  <button id="bulk-on">Expose</button>
+  <button id="bulk-off">Hide</button>
+  <label>Group <input id="bulk-group" placeholder="device name"></label>
+  <button id="bulk-group-apply">Set group</button>
+  <span class="spacer"></span>
+  <button id="bulk-clear">Clear</button>
 </div>
 
 <div class="wrap">
   <table>
     <thead>
       <tr>
+        <th><input type="checkbox" id="selectall" title="Select all shown"></th>
         <th>Join</th>
         <th>Value</th>
         <th>Name</th>
+        <th>Group</th>
         <th>Expose as</th>
         <th>On</th>
         <th class="hide-narrow">Write</th>
@@ -157,6 +173,7 @@ const state = {
   fresh: new Set(),       // changed since the last "Watch for changes"
   live: true,
   renderPending: false,
+  selected: new Set(),    // "processor/key" of ticked rows
 };
 
 const $ = (id) => document.getElementById(id);
@@ -271,6 +288,18 @@ function buildRow(join) {
   const row = document.createElement("tr");
   row.dataset.store = storeKey(join);
 
+  const cellPick = document.createElement("td");
+  const pick = document.createElement("input");
+  pick.type = "checkbox";
+  pick.className = "pick";
+  pick.addEventListener("change", () => {
+    const key = storeKey(join);
+    if (pick.checked) state.selected.add(key); else state.selected.delete(key);
+    renderBulkBar();
+  });
+  cellPick.appendChild(pick);
+  row.appendChild(cellPick);
+
   const cellKey = document.createElement("td");
   cellKey.innerHTML = '<span class="key"></span><br><span class="sig"></span>';
   row.appendChild(cellKey);
@@ -286,6 +315,15 @@ function buildRow(join) {
   name.addEventListener("change", () => configure(join, { name: name.value }));
   cellName.appendChild(name);
   row.appendChild(cellName);
+
+  const cellGroup = document.createElement("td");
+  const group = document.createElement("input");
+  group.className = "name";
+  group.placeholder = join.processor;
+  group.title = "Which Home Assistant device this join appears under";
+  group.addEventListener("change", () => configure(join, { group: group.value }));
+  cellGroup.appendChild(group);
+  row.appendChild(cellGroup);
 
   const cellKind = document.createElement("td");
   const kind = document.createElement("select");
@@ -313,7 +351,7 @@ function buildRow(join) {
   cellSeen.className = "muted hide-narrow";
   row.appendChild(cellSeen);
 
-  row._parts = { cellKey, cellValue, name, kind, enabled, cellSeen };
+  row._parts = { cellKey, cellValue, name, group, kind, enabled, cellSeen, pick };
   return row;
 }
 
@@ -356,6 +394,10 @@ function updateRow(row, join) {
   value.title = String(join.value ?? "");
 
   if (document.activeElement !== parts.name) parts.name.value = join.config.name || "";
+  if (document.activeElement !== parts.group) {
+    parts.group.value = join.config.group || "";
+  }
+  parts.pick.checked = state.selected.has(storeKey(join));
   parts.kind.value = join.kind || join.config.kind || "";
   parts.enabled.checked = !!join.config.enabled;
   parts.cellSeen.textContent = ago(join.last_seen) + " · " + (join.updates || 0) + "×";
@@ -407,6 +449,41 @@ async function write(join, payload) {
 }
 
 // -- loading --------------------------------------------------------------
+
+function selectedKeys() {
+  // Grouped by processor: the bulk endpoint takes one processor at a time,
+  // because a join key is only unique within one.
+  const byProcessor = new Map();
+  for (const store of state.selected) {
+    const join = state.joins.get(store);
+    if (!join) continue;
+    if (!byProcessor.has(join.processor)) byProcessor.set(join.processor, []);
+    byProcessor.get(join.processor).push(join.key);
+  }
+  return byProcessor;
+}
+
+function renderBulkBar() {
+  const bar = document.getElementById("bulkbar");
+  document.getElementById("bulkcount").textContent = String(state.selected.size);
+  bar.hidden = state.selected.size === 0;
+}
+
+async function bulk(changes) {
+  const byProcessor = selectedKeys();
+  if (!byProcessor.size) return;
+  let changed = 0;
+  for (const [processor, keys] of byProcessor) {
+    const result = await call("/api/joins/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ processor, keys, ...changes }),
+    });
+    if (result) changed += result.changed || 0;
+  }
+  toast(changed + " join(s) updated");
+  await loadJoins();
+}
 
 async function loadKinds() {
   try {
@@ -549,6 +626,80 @@ $("rescan").addEventListener("click", async () => {
   } finally {
     button.disabled = false;
     button.textContent = "Re-scan joins";
+  }
+});
+
+$("selectall").addEventListener("change", (event) => {
+  // Only what is on screen: ticking a hidden row would be a surprise.
+  for (const row of document.querySelectorAll("#rows tr")) {
+    const store = row.dataset.store;
+    if (!store) continue;
+    if (event.target.checked) state.selected.add(store);
+    else state.selected.delete(store);
+    const pick = row.querySelector(".pick");
+    if (pick) pick.checked = event.target.checked;
+  }
+  renderBulkBar();
+});
+
+$("bulk-clear").addEventListener("click", () => {
+  state.selected.clear();
+  $("selectall").checked = false;
+  for (const pick of document.querySelectorAll(".pick")) pick.checked = false;
+  renderBulkBar();
+});
+
+$("bulk-on").addEventListener("click", () => bulk({ enabled: true }));
+$("bulk-off").addEventListener("click", () => bulk({ enabled: false }));
+$("bulk-group-apply").addEventListener("click", () => {
+  bulk({ group: $("bulk-group").value.trim() });
+});
+
+$("autogroup").addEventListener("click", async () => {
+  const processor = $("f-processor").value;
+  if (!processor) {
+    toast("Choose a processor first — grouping is per processor.");
+    return;
+  }
+  const button = $("autogroup");
+  button.disabled = true;
+  try {
+    const result = await call("/api/joins/autogroup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ processor }),
+    });
+    toast(result.group_count
+      ? `${result.group_count} device(s) from ${result.joins} joins: `
+        + result.groups.slice(0, 6).join(", ")
+        + (result.groups.length > 6 ? "…" : "")
+      : "No repeating layout found — group these by hand.");
+    await loadJoins();
+  } catch (err) {
+    toast("Grouping failed: " + err.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$("mixer").addEventListener("click", async () => {
+  const processor = $("f-processor").value;
+  const button = $("mixer");
+  button.disabled = true;
+  try {
+    const query = processor ? "?processor=" + encodeURIComponent(processor) : "";
+    const result = await call("/api/cards/mixer" + query);
+    const yaml = JSON.stringify(result.card, null, 2);
+    await navigator.clipboard?.writeText(yaml).catch(() => {});
+    toast(`Mixer built: ${Object.keys(result.card.labels).length} zones`
+      + (result.omitted_zones.length
+         ? ` (${result.omitted_zones.length} without a volume left out)` : "")
+      + " — copied to the clipboard.");
+    console.log(yaml);
+  } catch (err) {
+    toast("Mixer failed: " + err.message);
+  } finally {
+    button.disabled = false;
   }
 });
 

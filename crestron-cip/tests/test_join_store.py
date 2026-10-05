@@ -185,3 +185,64 @@ def test_default_kind_follows_the_signal(store):
     assert store.joins["cp4/d1"].to_dict()["kind"] == KIND_BINARY_SENSOR
     assert store.joins["cp4/a1"].to_dict()["kind"] == KIND_SENSOR
     assert store.joins["cp4/s1"].to_dict()["kind"] == KIND_SENSOR
+
+
+# -- grouping and bulk ---------------------------------------------------
+#
+# CIP has no notion of a device, so without a group every join on a
+# processor lands in one Home Assistant device. A sixteen-zone BGM
+# system then arrives as a single device holding eighty-one entities.
+
+def _zone_joins(store):
+    """A subpage reference list's layout: item N at 11 + (N-1)*10."""
+    for n, label in enumerate(["Alfesco", "Gym", "Pool Area"], start=1):
+        base = 11 + (n - 1) * 10
+        store.observe("BGM", "s", base, label)
+        store.observe("BGM", "a", base, 15000)
+        store.observe("BGM", "d", base, False)
+        for offset in (1, 2, 3):
+            store.observe("BGM", "d", base + offset, False)
+            store.observe("BGM", "s", base + offset, f"Music Player {offset}")
+
+
+def test_autogroup_makes_one_device_per_zone(store):
+    _zone_joins(store)
+    assigned = store.autogroup("BGM")
+    assert sorted(set(assigned.values())) == ["Alfesco", "Gym", "Pool Area"]
+    # The zone's own joins travel with it, captions included.
+    assert store.joins["BGM/a21"].config.resolved_group("BGM") == "Gym"
+    assert store.joins["BGM/d23"].config.resolved_group("BGM") == "Gym"
+
+
+def test_a_join_outside_the_pattern_is_left_alone(store):
+    _zone_joins(store)
+    store.observe("BGM", "s", 1, "Background Music")
+    store.autogroup("BGM")
+    # Falls back to the processor rather than being swept into a guess.
+    assert store.joins["BGM/s1"].config.resolved_group("BGM") == "BGM"
+
+
+def test_group_defaults_to_the_processor(store):
+    store.observe("BGM", "a", 11, 1)
+    assert store.joins["BGM/a11"].config.resolved_group("BGM") == "BGM"
+
+
+def test_bulk_applies_to_many_and_reports_failures(store):
+    _zone_joins(store)
+    done, failed = store.bulk_configure(
+        "BGM", ["a11", "a21", "nosuchjoin"], enabled=True)
+    assert done == 2
+    assert len(failed) == 1 and "nosuchjoin" in failed[0]
+    assert store.joins["BGM/a11"].config.enabled
+
+
+def test_group_survives_a_save_and_reload(store):
+    _zone_joins(store)
+    store.autogroup("BGM")
+    store.configure("BGM", "a11", precision=0)
+    store.save()
+
+    reloaded = JoinStore(path=store.path)
+    reloaded.load()
+    assert reloaded.joins["BGM/a11"].config.group == "Alfesco"
+    assert reloaded.joins["BGM/a11"].config.precision == 0

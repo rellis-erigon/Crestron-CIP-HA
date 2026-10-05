@@ -20,12 +20,27 @@ class CrestronEntity(CoordinatorEntity[CrestronCoordinator]):
         # removing and re-adding the integration keeps the same entities.
         self._attr_unique_id = f"crestron_cip_{join.processor}_{join.key}"
         self._attr_name = join.name
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{DOMAIN}_{join.processor}")},
-            name=join.processor,
-            manufacturer="Crestron",
-            model="Control processor",
-        )
+        # One device per group. Without grouping every join on a
+        # processor lands in a single device, which for a sixteen-zone
+        # BGM system means one device holding eighty-one entities.
+        group = join.group or join.processor
+        if group == join.processor:
+            self._attr_device_info = DeviceInfo(
+                identifiers={(DOMAIN, f"{DOMAIN}_{join.processor}")},
+                name=join.processor,
+                manufacturer="Crestron",
+                model="Control processor",
+            )
+        else:
+            self._attr_device_info = DeviceInfo(
+                identifiers={(DOMAIN, f"{DOMAIN}_{join.processor}_{group}")},
+                name=group,
+                manufacturer="Crestron",
+                model="Zone",
+                via_device=(DOMAIN, f"{DOMAIN}_{join.processor}"),
+            )
+        if join.precision is not None:
+            self._attr_suggested_display_precision = join.precision
 
     @property
     def join(self) -> JoinData | None:
