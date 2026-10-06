@@ -105,6 +105,11 @@ async def run() -> None:
             len(hub.console), hub.health_interval,
         )
 
+    # Panels assigned to a processor bring that processor with them.
+    # The assignment lives in the panel store rather than the add-on
+    # options, so it is re-applied here rather than by Supervisor.
+    _attach_panels(hub)
+
     await hub.start()
 
     port = int(os.environ.get("INGRESS_PORT", "8099"))

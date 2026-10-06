@@ -189,3 +189,43 @@ def test_joins_are_exposed_unless_asked_otherwise():
     face = pi.to_faceplate(pi.read_objects(archive(PROJECT)))
     pa.apply_panel(store, "BGM", face, expose=False)
     assert all(not j["config"]["enabled"] for j in store.joins.values())
+
+
+class FakeHub:
+    """Enough of the hub to watch attach_processor."""
+
+    def __init__(self):
+        self.connections = {}
+        self.started = []
+
+    def add_processor(self, name, host, ipid, port=None):
+        self.connections[name] = type(
+            "C", (), {"host": host, "ipid": ipid, "port": port})()
+
+    def start_processor(self, name):
+        self.started.append(name)
+        return True
+
+
+def test_a_panel_brings_its_processor_and_connects_now():
+    """Waiting for a restart would make a one-click import a two-step one."""
+    hub = FakeHub()
+    assert pa.attach_processor(hub, "Reception", "10.0.0.5", 3) == "added"
+    assert hub.connections["Reception"].host == "10.0.0.5"
+    assert hub.started == ["Reception"]
+
+
+def test_re_importing_the_same_panel_is_not_a_second_connection():
+    hub = FakeHub()
+    pa.attach_processor(hub, "Reception", "10.0.0.5", 3)
+    assert pa.attach_processor(hub, "Reception", "10.0.0.5", 3) == "unchanged"
+    assert hub.started == ["Reception"]
+
+
+def test_a_name_already_pointing_elsewhere_is_refused():
+    """Silently moving a processor would take its joins with it."""
+    hub = FakeHub()
+    pa.attach_processor(hub, "Reception", "10.0.0.5", 3)
+    with pytest.raises(pa.ApplyError) as err:
+        pa.attach_processor(hub, "Reception", "10.0.0.9", 3)
+    assert "already connected" in str(err.value)

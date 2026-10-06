@@ -880,7 +880,6 @@ $("p-load").addEventListener("click", async () => {
     } else if (summary.processor) {
       bits.push(`processor ${summary.processor}`);
       bits.push(`${summary.joins_configured} joins configured`);
-      if (summary.restarting) bits.push("add-on restarting");
     }
     bits.push("card copied");
     $("p-result").textContent = bits.join(" · ");

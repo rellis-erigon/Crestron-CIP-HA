@@ -10,14 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import urllib.error
-import urllib.request
 from typing import Any
 
 logger = logging.getLogger("crestron-cip.panel")
 
-SUPERVISOR = "http://supervisor"
 DEFAULT_PORT = 41794
 
 # What a join becomes in Home Assistant, by signal. A panel button is
@@ -29,49 +25,28 @@ class ApplyError(Exception):
     """The panel could not be applied to a processor."""
 
 
-def _supervisor(path: str, method: str = "GET", body: dict | None = None) -> dict:
-    token = os.environ.get("SUPERVISOR_TOKEN")
-    if not token:
-        raise ApplyError("no Supervisor token; cannot change the add-on options")
-    request = urllib.request.Request(
-        f"{SUPERVISOR}{path}", method=method,
-        data=json.dumps(body).encode() if body is not None else None,
-        headers={"Authorization": f"Bearer {token}",
-                 "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return json.load(response)
-    except urllib.error.HTTPError as err:
-        raise ApplyError(f"Supervisor refused: {err.code} {err.reason}")
-    except OSError as err:
-        raise ApplyError(f"cannot reach Supervisor: {err}")
-
-
-def ensure_processor(name: str, host: str, ipid: int,
+def attach_processor(hub: Any, name: str, host: str, ipid: int,
                      port: int = DEFAULT_PORT) -> str:
-    """Add or update this processor in the add-on's own options.
+    """Connect to the processor a panel was assigned to, now.
 
-    Returns what happened, so the caller can say whether a restart is
-    coming. Matching is on host and IPID rather than name: that pair is
-    the connection, and renaming one should not create a second.
+    Deliberately not done by editing the add-on's own options through
+    Supervisor. That needs a token the add-on does not reliably get, and
+    changing options makes Supervisor restart the add-on — which would
+    kill the very request doing the importing. The assignment is kept
+    in the panel store instead and re-applied at startup, so it
+    survives a restart without depending on one.
     """
-    info = _supervisor("/addons/self/info")
-    options = dict(info["data"]["options"])
-    processors = [dict(p) for p in options.get("processors") or []]
+    existing = hub.connections.get(name)
+    if existing is not None:
+        if existing.host == host and existing.ipid == ipid:
+            return "unchanged"
+        raise ApplyError(
+            f"a processor called {name!r} is already connected to "
+            f"{existing.host} as IPID 0x{existing.ipid:02X}; rename the panel"
+        )
 
-    for entry in processors:
-        if entry.get("host") == host and int(entry.get("ipid", 0)) == ipid:
-            changed = entry.get("name") != name or int(entry.get("port") or 0) != port
-            entry["name"], entry["port"] = name, port
-            if not changed:
-                return "unchanged"
-            options["processors"] = processors
-            _supervisor("/addons/self/options", "POST", {"options": options})
-            return "updated"
-
-    processors.append({"name": name, "host": host, "ipid": ipid, "port": port})
-    options["processors"] = processors
-    _supervisor("/addons/self/options", "POST", {"options": options})
+    hub.add_processor(name, host, ipid, port)
+    hub.start_processor(name)
     return "added"
 
 

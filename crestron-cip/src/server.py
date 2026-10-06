@@ -21,7 +21,7 @@ from pathlib import Path
 from aiohttp import web
 
 from panel_apply import (
-    DEFAULT_PORT, ApplyError, apply_panel, ensure_processor,
+    DEFAULT_PORT, ApplyError, apply_panel, attach_processor,
 )
 from panel_import import PanelError, read_objects, to_faceplate
 from cards import (
@@ -96,6 +96,19 @@ class Hub:
                 self._subscribers.discard(queue)
 
     # -- lifecycle -------------------------------------------------------
+
+    def start_processor(self, name: str) -> bool:
+        """Connect to a processor added after the hub was started.
+
+        A panel import adds its processor there and then, so waiting for
+        a restart to pick it up would make a one-click import a
+        two-step one.
+        """
+        conn = self.connections.get(name)
+        if conn is None:
+            return False
+        self._tasks.append(asyncio.create_task(conn.run()))
+        return True
 
     async def start(self) -> None:
         for conn in self.connections.values():
@@ -529,7 +542,7 @@ async def upload_panel(request: web.Request) -> web.Response:
     assignment = {
         "host": (request.query.get("host") or "").strip(),
         "ipid": request.query.get("ipid", ""),
-        "port": request.query.get("port", "") or DEFAULT_PORT,
+        "port": int(request.query.get("port") or DEFAULT_PORT),
     }
     PANEL_FILE.parent.mkdir(parents=True, exist_ok=True)
     PANEL_FILE.write_text(json.dumps(
@@ -550,7 +563,7 @@ async def upload_panel(request: web.Request) -> web.Response:
         try:
             ipid = int(str(assignment["ipid"]), 0)
             port = int(assignment["port"])
-            change = ensure_processor(name, assignment["host"], ipid, port)
+            change = attach_processor(hub, name, assignment["host"], ipid, port)
             counts = apply_panel(hub.store, name, faceplate)
         except (ApplyError, ValueError) as err:
             result["assign_error"] = str(err)
@@ -559,9 +572,6 @@ async def upload_panel(request: web.Request) -> web.Response:
             "processor": change,
             "joins_created": counts["created"],
             "joins_configured": counts["configured"],
-            # Adding a processor rewrites the add-on options, and
-            # Supervisor restarts the add-on to apply them.
-            "restarting": change in ("added", "updated"),
         })
     return web.json_response(result)
 
