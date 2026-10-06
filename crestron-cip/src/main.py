@@ -52,6 +52,38 @@ def load_options() -> dict:
         sys.exit(1)
 
 
+PANEL_FILE = Path("/config/crestron-cip/panel.json")
+
+
+def _attach_panels(hub: Hub) -> None:
+    """Re-apply a panel's processor assignment at startup.
+
+    The assignment lives in the panel store rather than the add-on
+    options, because changing those makes Supervisor restart the add-on
+    — which would kill the request doing the import. The cost is that
+    it has to be re-applied here.
+    """
+    try:
+        stored = json.loads(PANEL_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return
+    processor = stored.get("processor") or {}
+    name, host = stored.get("name"), processor.get("host")
+    if not (name and host and processor.get("ipid")):
+        return
+    if name in hub.connections:
+        return
+    try:
+        ipid = int(str(processor["ipid"]), 0)
+        port = int(processor.get("port") or 41794)
+    except (TypeError, ValueError) as err:
+        logger.warning("Panel %s has a bad processor address: %s", name, err)
+        return
+    hub.add_processor(name, host, ipid, port)
+    logger.info("Panel %s brings processor %s:%d as IPID 0x%02X",
+                name, host, port, ipid)
+
+
 def setup_logging(level_name: str) -> None:
     logging.basicConfig(
         level=getattr(logging, level_name.upper(), logging.INFO),
