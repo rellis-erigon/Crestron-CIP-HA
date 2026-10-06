@@ -20,6 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 SERVICE_RESCAN = "rescan"
 SERVICE_GENERATE_CARD = "generate_room_card"
 SERVICE_GENERATE_PANEL = "generate_panel_card"
+SERVICE_GENERATE_MIXER = "generate_mixer_card"
 ATTR_TARGET = "processor"
 
 # The platforms a join can become. A room role is bound to whichever one
@@ -200,6 +201,81 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_GENERATE_PANEL, handle_generate_panel_card,
         schema=vol.Schema({}),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    async def handle_generate_mixer_card(call: ServiceCall) -> ServiceResponse:
+        """The zone-mixer console, with real entity ids.
+
+        Same split as the panel card: the add-on knows the join numbers
+        and nothing about what they became here.
+        """
+        entries = hass.data.get(DOMAIN, {})
+        if not entries:
+            raise HomeAssistantError("The bridge is not set up")
+        coordinator = next(iter(entries.values()))
+
+        processor = (call.data.get(ATTR_TARGET) or "").strip()
+        params = {k: v for k, v in (
+            ("processor", processor),
+            ("roles", call.data.get("roles") or ""),
+            ("per_row", str(call.data.get("per_row") or "")),
+        ) if v}
+
+        session = async_get_clientsession(hass)
+        try:
+            async with session.get(
+                f"{coordinator.url}/api/cards/mixer", params=params,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as response:
+                payload = await response.json()
+                if response.status != 200:
+                    raise HomeAssistantError(
+                        payload.get("error", f"Add-on returned {response.status}")
+                    )
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise HomeAssistantError(f"Could not reach the add-on: {err}") from err
+
+        card = payload.get("card")
+        if not card:
+            raise HomeAssistantError("The add-on produced no card")
+
+        registry = er.async_get(hass)
+        resolved: dict[str, str] = {}
+        missing: list[str] = []
+        for role, key in card.get("entities", {}).items():
+            entity_id = _entity_id_for_key(registry, processor, key)
+            if entity_id:
+                resolved[role] = entity_id
+            else:
+                missing.append(role)
+
+        if not resolved:
+            raise HomeAssistantError(
+                "None of the mixer's joins have entities here — expose "
+                "them in the add-on first"
+            )
+        card["entities"] = resolved
+
+        return {
+            "card": card,
+            "yaml": yaml.safe_dump(
+                card, default_flow_style=False, sort_keys=False,
+                allow_unicode=True, width=10000,
+            ),
+            "channels": len(card.get("labels", {})),
+            "roles_without_entities": sorted(missing),
+            "unbound_zones": payload.get("unbound_zones", []),
+            "over_cap_zones": payload.get("over_cap_zones", []),
+        }
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_GENERATE_MIXER, handle_generate_mixer_card,
+        schema=vol.Schema({
+            vol.Optional(ATTR_TARGET): str,
+            vol.Optional("roles"): str,
+            vol.Optional("per_row"): int,
+        }),
         supports_response=SupportsResponse.ONLY,
     )
 

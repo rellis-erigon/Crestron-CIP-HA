@@ -53,3 +53,33 @@ def test_it_re_applies_a_panel_assignment(tree):
     only thing that can bring it back after a restart."""
     import main
     assert hasattr(main, "_attach_panels")
+
+
+# -- documentation ------------------------------------------------------
+
+def test_the_docs_only_name_services_that_exist():
+    """Documenting a service that was never written is worse than not
+    documenting it: the reader follows the steps and nothing happens."""
+    import re
+    root = Path(__file__).resolve().parents[2]
+    registered = set(re.findall(
+        r'SERVICE_\w+ = "(\w+)"',
+        (root / "custom_components/crestron_cip/services.py").read_text()))
+    named = set()
+    for doc in ("README.md", "crestron-cip/DOCS.md"):
+        named |= set(re.findall(r"crestron_cip\.(\w+)", (root / doc).read_text()))
+    assert not named - registered, f"documented but missing: {sorted(named - registered)}"
+
+
+def test_every_service_is_declared_for_the_ui():
+    """A service with no services.yaml entry has no form in Developer
+    tools, which is where these are meant to be run from."""
+    import re
+    root = Path(__file__).resolve().parents[2]
+    registered = set(re.findall(
+        r'SERVICE_\w+ = "(\w+)"',
+        (root / "custom_components/crestron_cip/services.py").read_text()))
+    declared = set(re.findall(
+        r"^(\w+):$",
+        (root / "custom_components/crestron_cip/services.yaml").read_text(), re.M))
+    assert not registered - declared, f"undeclared: {sorted(registered - declared)}"

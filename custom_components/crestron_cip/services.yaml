@@ -30,3 +30,32 @@ generate_panel_card:
   description: >-
     The XPanel imported in the add-on, as a card with real entity ids.
     Import the panel with its processor address first so the joins exist.
+
+generate_mixer_card:
+  name: Generate mixer card
+  description: >-
+    The zone-mixer console built in the add-on, as a card with real
+    entity ids. Group the zones and expose their joins first.
+  fields:
+    processor:
+      name: Crestron processor
+      description: Which processor's zones to use.
+      required: false
+      selector:
+        text:
+    roles:
+      name: Properties
+      description: >-
+        What each channel carries, as role:signal:offset — for example
+        volume:a:0,mute:d:0. Omit for the add-on's default.
+      required: false
+      selector:
+        text:
+    per_row:
+      name: Strips per row
+      description: The console wraps past this. Eight by default.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 16

@@ -38,7 +38,28 @@ would: digital, analog and serial. That means it sees what the program
 publishes, and can drive anything the panel could drive.
 
 It does not read the SIMPL program, so it cannot tell you what `d12` is for.
-Nothing can. That is what the live join watcher is for.
+Nothing can — but a *panel project* can, which is what the XPanel import
+is for.
+
+## Loading an XPanel
+
+A compiled panel project — `.c3p` or `.vtz` — already says which joins
+exist, where each control sits and what it does. Load one and the add-on
+adds the processor, creates and names every join, exposes them, groups
+them into a device, and gives you the panel back as a Home Assistant
+card.
+
+```
+Load panel → file, name, processor IP, IPID, port → Load and assign
+Developer tools → Actions → crestron_cip.generate_panel_card
+Dashboard → Add card → Manual → paste
+```
+
+Full walkthrough, including what each panel object becomes and what the
+import cannot do, is in [the add-on documentation](crestron-cip/DOCS.md).
+
+The card itself is `custom:crestron-panel-card` from
+[HA-rellis-erigon-Cards](https://github.com/rellis-erigon/HA-rellis-erigon-Cards).
 
 ## Requirements
 
@@ -47,10 +68,22 @@ configure. An IP table entry alone will not do — the processor answers and
 then rejects the registration, because the program has no device at that ID.
 
 You do not necessarily need a *new* one. Two connections on the same IPID
-have been measured holding simultaneously, both registered and both
-receiving feedback, so the bridge can usually sit alongside an existing
-panel rather than replacing it. Confirm it on your own system before
-relying on it.
+have been measured holding simultaneously on a DMPS, both registered and
+both receiving feedback, so the bridge can often sit alongside an
+existing panel rather than replacing it.
+
+**This is processor-dependent — confirm it on your own system.** A CP4
+here behaves differently: with its panel connected, a second session on
+the same IPID is accepted at TCP level and then never answered, which
+looks exactly like a timeout:
+
+```
+Connected to 192.0.2.10:41794 as IPID 0x03
+No registration result within 20s
+```
+
+If you see that while a panel is running, the IPID is taken. Define a
+spare XPanel IPID in the program for the bridge.
 
 ## Development
 
