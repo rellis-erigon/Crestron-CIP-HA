@@ -84,8 +84,10 @@ async def run() -> None:
         ipid = entry.get("ipid", 16)
         if isinstance(ipid, str):
             ipid = int(ipid, 0)
-        hub.add_processor(name, host, int(ipid))
-        logger.info("Processor %s at %s as IPID 0x%02X", name, host, ipid)
+        port = entry.get("port")
+        hub.add_processor(name, host, int(ipid), int(port) if port else None)
+        logger.info("Processor %s at %s:%s as IPID 0x%02X",
+                    name, host, port or "default", ipid)
 
         # Console credentials are optional: without them the bridge simply
         # reports no load or memory figures.

@@ -1,6 +1,6 @@
 name: "Crestron CIP Bridge"
 description: "Discover Crestron touchpanel joins over CIP and expose them to Home Assistant"
-version: "0.8.1"
+version: "0.9.0"
 slug: crestron-cip
 url: "https://github.com/rellis-erigon/Crestron-CIP-HA"
 init: false
@@ -12,6 +12,10 @@ arch:
   - aarch64
   - amd64
   - armv7
+# Needed so a panel import can add the processor it is
+# assigned to, rather than asking someone to type it twice.
+hassio_api: true
+hassio_role: manager
 map:
   - config:rw
 options:
@@ -19,6 +23,7 @@ options:
     - name: ""
       host: ""
       ipid: 16
+      port: 41794
   health_interval: 300
   log_level: "info"
 schema:
@@ -26,6 +31,7 @@ schema:
     - name: str
       host: str
       ipid: int(2,254)
+      port: int(1,65535)?
       console_username: str?
       console_password: password?
   health_interval: int(60,3600)

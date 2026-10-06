@@ -143,11 +143,19 @@ tr.fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
     A compiled panel project — <code>.c3p</code> or <code>.vtz</code>. The
     objects, their positions and their joins become a card. A
     <code>.vtp</code> source project cannot be read; compile it first.
+    Give it a processor and the rest is automatic: the processor is added,
+    its joins created, named, exposed and grouped into one device. Leave
+    the address blank to import the layout only.
   </p>
   <div class="row">
     <input type="file" id="p-file" accept=".c3p,.vtz,.zip">
     <label>Name <input id="p-name" placeholder="Panel"></label>
-    <button id="p-load">Load</button>
+  </div>
+  <div class="row">
+    <label>Processor IP <input id="p-host" placeholder="192.168.0.10"></label>
+    <label>IPID <input id="p-ipid" placeholder="03" size="4"></label>
+    <label>Port <input id="p-port" type="number" value="41794"></label>
+    <button id="p-load">Load and assign</button>
     <button id="p-close">Close</button>
     <span class="spacer"></span>
     <span class="muted" id="p-result"></span>
@@ -852,17 +860,30 @@ $("p-load").addEventListener("click", async () => {
     const name = $("p-name").value.trim() || file.name.replace(/\.[^.]+$/, "");
     // Sent as raw bytes: a panel project is tens of megabytes and
     // base64 in JSON would be a third larger again for no reason.
-    const summary = await call(
-      "/api/panel/upload?name=" + encodeURIComponent(name),
+    const query = new URLSearchParams({ name });
+    if ($("p-host").value.trim()) {
+      query.set("host", $("p-host").value.trim());
+      query.set("ipid", $("p-ipid").value.trim() || "3");
+      query.set("port", $("p-port").value || "41794");
+    }
+    const summary = await call("/api/panel/upload?" + query.toString(),
       { method: "POST", body: await file.arrayBuffer() });
     const card = await call("/api/cards/panel");
     const text = JSON.stringify(card.card, null, 2);
     $("p-out").value = text;
     $("p-out").hidden = false;
     await navigator.clipboard?.writeText(text).catch(() => {});
-    $("p-result").textContent =
-      `${summary.regions} controls, ${summary.size[0]}x${summary.size[1]}, `
-      + `joins ${summary.joins.join(" ")} — copied`;
+    const bits = [`${summary.regions} controls`,
+                  `${summary.size[0]}x${summary.size[1]}`];
+    if (summary.assign_error) {
+      bits.push("not assigned: " + summary.assign_error);
+    } else if (summary.processor) {
+      bits.push(`processor ${summary.processor}`);
+      bits.push(`${summary.joins_configured} joins configured`);
+      if (summary.restarting) bits.push("add-on restarting");
+    }
+    bits.push("card copied");
+    $("p-result").textContent = bits.join(" · ");
   } catch (err) {
     $("p-result").textContent = "failed: " + err.message;
   } finally {

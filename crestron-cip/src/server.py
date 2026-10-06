@@ -20,6 +20,9 @@ from pathlib import Path
 
 from aiohttp import web
 
+from panel_apply import (
+    DEFAULT_PORT, ApplyError, apply_panel, ensure_processor,
+)
 from panel_import import PanelError, read_objects, to_faceplate
 from cards import (
     MIXER_ROLES, describe as describe_roles, mixer_card, parse_roles,
@@ -48,8 +51,10 @@ class Hub:
         self._subscribers: set[asyncio.Queue] = set()
         self._tasks: list[asyncio.Task] = []
 
-    def add_processor(self, name: str, host: str, ipid: int) -> CipConnection:
-        conn = CipConnection(host, ipid, name=name)
+    def add_processor(self, name: str, host: str, ipid: int,
+                      port: int | None = None) -> CipConnection:
+        conn = CipConnection(host, ipid, name=name,
+                             **({"port": port} if port else {}))
         conn._on_join = lambda join, n=name: self._on_join(n, join)
         self.connections[name] = conn
         return conn
@@ -521,16 +526,44 @@ async def upload_panel(request: web.Request) -> web.Response:
             reason="no objects with joins in that project — it may be a "
                    "shell rather than a finished panel")
 
+    assignment = {
+        "host": (request.query.get("host") or "").strip(),
+        "ipid": request.query.get("ipid", ""),
+        "port": request.query.get("port", "") or DEFAULT_PORT,
+    }
     PANEL_FILE.parent.mkdir(parents=True, exist_ok=True)
     PANEL_FILE.write_text(json.dumps(
-        {"name": name, "faceplate": faceplate}, indent=1))
+        {"name": name, "faceplate": faceplate, "processor": assignment}, indent=1))
+
     roles = sorted({r["role"] for r in faceplate["regions"] if r.get("role")})
-    return web.json_response({
+    result = {
         "ok": True, "name": name,
         "size": faceplate["size"],
         "regions": len(faceplate["regions"]),
         "joins": roles,
-    })
+    }
+
+    # Assigning it is the whole point: a panel project already says what
+    # every join is, so nobody should have to enter it a second time.
+    if assignment["host"] and assignment["ipid"]:
+        hub: Hub = request.app["hub"]
+        try:
+            ipid = int(str(assignment["ipid"]), 0)
+            port = int(assignment["port"])
+            change = ensure_processor(name, assignment["host"], ipid, port)
+            counts = apply_panel(hub.store, name, faceplate)
+        except (ApplyError, ValueError) as err:
+            result["assign_error"] = str(err)
+            return web.json_response(result)
+        result.update({
+            "processor": change,
+            "joins_created": counts["created"],
+            "joins_configured": counts["configured"],
+            # Adding a processor rewrites the add-on options, and
+            # Supervisor restarts the add-on to apply them.
+            "restarting": change in ("added", "updated"),
+        })
+    return web.json_response(result)
 
 
 async def panel_card(request: web.Request) -> web.Response:

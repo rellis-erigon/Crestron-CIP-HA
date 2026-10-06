@@ -120,3 +120,72 @@ def test_a_reserved_join_is_not_a_control():
 def test_the_page_sets_the_canvas():
     face = pi.to_faceplate(pi.read_objects(archive(PROJECT)))
     assert face["size"] == [800, 600]
+
+
+# -- assigning a panel to a processor ------------------------------------
+
+import panel_apply as pa  # noqa: E402
+
+
+class FakeStore:
+    """Enough of JoinStore to watch what apply_panel does."""
+
+    def __init__(self):
+        self.joins = {}
+        self.saved = False
+
+    def observe(self, processor, signal, number, value):
+        key = f"{processor}/{signal}{number}"
+        self.joins[key] = {"config": {}}
+        return self.joins[key]
+
+    def configure(self, processor, join_key, **changes):
+        self.joins[f"{processor}/{join_key}"]["config"].update(changes)
+
+    def save(self):
+        self.saved = True
+
+
+def test_every_join_the_panel_uses_is_listed():
+    face = pi.to_faceplate(pi.read_objects(archive(PROJECT)))
+    found = {f"{s}{n}" for s, n, _ in pa.panel_joins(face)}
+    assert found == {"a1", "d4", "s4"}
+
+
+def test_a_reserved_join_is_not_configured():
+    face = pi.to_faceplate(pi.read_objects(archive(PROJECT)))
+    assert not any(n >= pi.RESERVED_FROM for _, n, _ in pa.panel_joins(face))
+
+
+def test_joins_are_created_before_any_traffic():
+    """CIP only reports joins that are off their default, so waiting for
+    the processor to mention one leaves the panel half-configured until
+    somebody presses every button on it."""
+    store = FakeStore()
+    face = pi.to_faceplate(pi.read_objects(archive(PROJECT)))
+    counts = pa.apply_panel(store, "BGM", face)
+    assert counts["created"] == 3
+    assert set(store.joins) == {"BGM/a1", "BGM/d4", "BGM/s4"}
+    assert store.saved
+
+
+def test_each_join_gets_a_sensible_platform():
+    store = FakeStore()
+    pa.apply_panel(store, "BGM", pi.to_faceplate(pi.read_objects(archive(PROJECT))))
+    # A panel button is momentary, so a button rather than a switch.
+    assert store.joins["BGM/d4"]["config"]["kind"] == "button"
+    assert store.joins["BGM/a1"]["config"]["kind"] == "number"
+    assert store.joins["BGM/s4"]["config"]["kind"] == "sensor"
+
+
+def test_the_panel_becomes_one_device():
+    store = FakeStore()
+    pa.apply_panel(store, "Reception", pi.to_faceplate(pi.read_objects(archive(PROJECT))))
+    assert {j["config"]["group"] for j in store.joins.values()} == {"Reception"}
+
+
+def test_joins_are_exposed_unless_asked_otherwise():
+    store = FakeStore()
+    face = pi.to_faceplate(pi.read_objects(archive(PROJECT)))
+    pa.apply_panel(store, "BGM", face, expose=False)
+    assert all(not j["config"]["enabled"] for j in store.joins.values())
