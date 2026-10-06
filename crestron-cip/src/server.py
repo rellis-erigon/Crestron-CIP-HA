@@ -613,8 +613,14 @@ async def index(request: web.Request) -> web.Response:
     return web.FileResponse(page)
 
 
+# A compiled panel project is mostly Flash runtime and theme artwork,
+# so it arrives at tens of megabytes. aiohttp's default body limit is
+# one, which rejects every real panel with a bare 413.
+MAX_UPLOAD = 96 * 1024 * 1024
+
+
 def build_app(hub: Hub) -> web.Application:
-    app = web.Application()
+    app = web.Application(client_max_size=MAX_UPLOAD)
     app["hub"] = hub
     app.add_routes([
         web.get("/", index),

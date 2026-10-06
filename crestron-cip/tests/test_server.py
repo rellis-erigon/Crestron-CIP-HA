@@ -331,3 +331,9 @@ async def test_a_processor_that_cannot_be_asked_is_reported(client, hub):
     body = await (await client.post("/api/rediscover", json={})).json()
     assert body["processors"]["Processor"]["ok"] is False
     assert "not registered" in body["processors"]["Processor"]["error"]
+
+
+async def test_the_app_accepts_a_real_panel_upload(client):
+    """A compiled panel is tens of megabytes; aiohttp's default limit of
+    one rejects every real one with a bare 413."""
+    assert client.server.app._client_max_size >= 24 * 1024 * 1024
