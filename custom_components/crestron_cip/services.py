@@ -19,6 +19,7 @@ _LOGGER = logging.getLogger(__name__)
 
 SERVICE_RESCAN = "rescan"
 SERVICE_GENERATE_CARD = "generate_room_card"
+SERVICE_GENERATE_PANEL = "generate_panel_card"
 ATTR_TARGET = "processor"
 
 # The platforms a join can become. A room role is bound to whichever one
@@ -132,6 +133,73 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_GENERATE_CARD, handle_generate_room_card,
         schema=vol.Schema({vol.Optional(ATTR_TARGET): str}),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    async def handle_generate_panel_card(call: ServiceCall) -> ServiceResponse:
+        """The imported XPanel as a card, with real entity ids.
+
+        The add-on emits the layout and the join keys; it has no idea
+        what those joins became here. Only the registry knows that, so
+        the substitution happens on this side — the same split as every
+        other card generator in these bridges.
+        """
+        entries = hass.data.get(DOMAIN, {})
+        if not entries:
+            raise HomeAssistantError("The bridge is not set up")
+        coordinator = next(iter(entries.values()))
+
+        session = async_get_clientsession(hass)
+        try:
+            async with session.get(
+                f"{coordinator.url}/api/cards/panel",
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as response:
+                payload = await response.json()
+                if response.status != 200:
+                    raise HomeAssistantError(
+                        payload.get("error", f"Add-on returned {response.status}")
+                    )
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise HomeAssistantError(f"Could not reach the add-on: {err}") from err
+
+        card = payload.get("card")
+        if not card:
+            raise HomeAssistantError("No panel has been imported")
+
+        # The panel's processor is named after the panel.
+        processor = card.get("title") or ""
+        registry = er.async_get(hass)
+        resolved: dict[str, str] = {}
+        missing: list[str] = []
+        for role, key in card.get("entities", {}).items():
+            entity_id = _entity_id_for_key(registry, processor, key)
+            if entity_id:
+                resolved[role] = entity_id
+            else:
+                missing.append(key)
+
+        if not resolved:
+            raise HomeAssistantError(
+                f"None of the panel's joins have entities under {processor!r} "
+                "— re-import the panel with its processor address so the "
+                "joins are created and exposed"
+            )
+        card["entities"] = resolved
+
+        return {
+            "card": card,
+            "yaml": yaml.safe_dump(
+                card, default_flow_style=False, sort_keys=False,
+                allow_unicode=True, width=10000,
+            ),
+            "controls": len(card.get("panel", {}).get("regions", [])),
+            "joins_without_entities": sorted(missing),
+        }
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_GENERATE_PANEL, handle_generate_panel_card,
+        schema=vol.Schema({}),
         supports_response=SupportsResponse.ONLY,
     )
 

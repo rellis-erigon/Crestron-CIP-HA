@@ -24,3 +24,9 @@ generate_room_card:
       required: false
       selector:
         text:
+
+generate_panel_card:
+  name: Generate panel card
+  description: >-
+    The XPanel imported in the add-on, as a card with real entity ids.
+    Import the panel with its processor address first so the joins exist.
