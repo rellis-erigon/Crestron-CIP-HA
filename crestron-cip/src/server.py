@@ -20,6 +20,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from panel_import import PanelError, read_objects, to_faceplate
 from cards import (
     MIXER_ROLES, describe as describe_roles, mixer_card, parse_roles,
     room_card,
@@ -497,6 +498,62 @@ async def mixer_card_endpoint(request: web.Request) -> web.Response:
     })
 
 
+PANEL_FILE = Path("/config/crestron-cip/panel.json")
+
+
+async def upload_panel(request: web.Request) -> web.Response:
+    """Read a .c3p or .vtz and keep the faceplate it describes."""
+    body = await request.read()
+    if not body:
+        raise web.HTTPBadRequest(reason="no file received")
+    name = request.query.get("name", "Panel")
+    try:
+        objects = read_objects(body)
+        faceplate = to_faceplate(objects, name)
+    except PanelError as err:
+        raise web.HTTPBadRequest(reason=str(err))
+    except Exception as err:  # malformed archives are the user's reality
+        logger.warning("Could not read panel: %s", err)
+        raise web.HTTPBadRequest(reason=f"could not read the panel: {err}")
+
+    if not faceplate["regions"]:
+        raise web.HTTPBadRequest(
+            reason="no objects with joins in that project — it may be a "
+                   "shell rather than a finished panel")
+
+    PANEL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PANEL_FILE.write_text(json.dumps(
+        {"name": name, "faceplate": faceplate}, indent=1))
+    roles = sorted({r["role"] for r in faceplate["regions"] if r.get("role")})
+    return web.json_response({
+        "ok": True, "name": name,
+        "size": faceplate["size"],
+        "regions": len(faceplate["regions"]),
+        "joins": roles,
+    })
+
+
+async def panel_card(request: web.Request) -> web.Response:
+    """The stored panel as a card, with join keys where entity ids go."""
+    if not PANEL_FILE.exists():
+        return web.json_response(
+            {"error": "no panel loaded — import a .c3p or .vtz first"},
+            status=404)
+    stored = json.loads(PANEL_FILE.read_text())
+    faceplate = stored["faceplate"]
+    roles = sorted({r["role"] for r in faceplate["regions"] if r.get("role")}
+                   | {r["target"] for r in faceplate["regions"] if r.get("target")})
+    return web.json_response({
+        "card": {
+            "type": "custom:crestron-panel-card",
+            "title": stored.get("name") or "Panel",
+            "panel": faceplate,
+            "entities": {role: role for role in roles},
+        },
+        "keys": roles,
+    })
+
+
 async def integration_joins(request: web.Request) -> web.Response:
     """What the Home Assistant integration consumes: exposed joins only."""
     hub: Hub = request.app["hub"]
@@ -574,6 +631,8 @@ def build_app(hub: Hub) -> web.Application:
         web.get("/api/health", health),
         web.get("/api/cards/room", room_card_endpoint),
         web.get("/api/cards/mixer", mixer_card_endpoint),
+        web.post("/api/panel/upload", upload_panel),
+        web.get("/api/cards/panel", panel_card),
         web.get("/api/cards/mixer/roles", mixer_roles),
         web.get("/api/integration/joins", integration_joins),
     ])

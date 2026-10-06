@@ -131,6 +131,28 @@ tr.fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   <button id="rescan" title="Ask every processor to dump its joins again">Re-scan joins</button>
   <button id="autogroup" title="Derive one device per zone from the join layout">Build device groups</button>
   <button id="mixer" title="Build a zone-mixer card from the grouped zones">Build mixer</button>
+  <button id="panel" title="Load a .c3p or .vtz and render it as a card">Load panel</button>
+</div>
+
+<!-- An XPanel is already the shape these cards render: positioned
+     objects that each name a join. So the panel someone already has
+     becomes the card, rather than anyone drawing a mimic by hand. -->
+<div class="panel" id="panelpanel" hidden>
+  <h3>Load XPanel</h3>
+  <p class="muted">
+    A compiled panel project — <code>.c3p</code> or <code>.vtz</code>. The
+    objects, their positions and their joins become a card. A
+    <code>.vtp</code> source project cannot be read; compile it first.
+  </p>
+  <div class="row">
+    <input type="file" id="p-file" accept=".c3p,.vtz,.zip">
+    <label>Name <input id="p-name" placeholder="Panel"></label>
+    <button id="p-load">Load</button>
+    <button id="p-close">Close</button>
+    <span class="spacer"></span>
+    <span class="muted" id="p-result"></span>
+  </div>
+  <textarea id="p-out" rows="10" hidden readonly></textarea>
 </div>
 
 <!-- Appears only when rows are ticked. Eighty joins is too many to set
@@ -808,6 +830,41 @@ $("m-build").addEventListener("click", async () => {
       + " · copied";
   } catch (err) {
     $("m-result").textContent = "failed: " + err.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$("panel").addEventListener("click", () => {
+  const box = $("panelpanel");
+  box.hidden = !box.hidden;
+  if (!box.hidden) box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+});
+$("p-close").addEventListener("click", () => { $("panelpanel").hidden = true; });
+
+$("p-load").addEventListener("click", async () => {
+  const file = $("p-file").files[0];
+  if (!file) { $("p-result").textContent = "choose a file first"; return; }
+  const button = $("p-load");
+  button.disabled = true;
+  $("p-result").textContent = "reading…";
+  try {
+    const name = $("p-name").value.trim() || file.name.replace(/\.[^.]+$/, "");
+    // Sent as raw bytes: a panel project is tens of megabytes and
+    // base64 in JSON would be a third larger again for no reason.
+    const summary = await call(
+      "/api/panel/upload?name=" + encodeURIComponent(name),
+      { method: "POST", body: await file.arrayBuffer() });
+    const card = await call("/api/cards/panel");
+    const text = JSON.stringify(card.card, null, 2);
+    $("p-out").value = text;
+    $("p-out").hidden = false;
+    await navigator.clipboard?.writeText(text).catch(() => {});
+    $("p-result").textContent =
+      `${summary.regions} controls, ${summary.size[0]}x${summary.size[1]}, `
+      + `joins ${summary.joins.join(" ")} — copied`;
+  } catch (err) {
+    $("p-result").textContent = "failed: " + err.message;
   } finally {
     button.disabled = false;
   }
