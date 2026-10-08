@@ -23,7 +23,12 @@ from aiohttp import web
 from panel_apply import (
     DEFAULT_PORT, ApplyError, apply_panel, attach_processor,
 )
+from panel_faceplate import (
+    build_faceplate, candidate_screens, main_screen, summarise_faceplate,
+)
+from panel_groups import propose
 from panel_import import PanelError, read_objects, to_faceplate
+from panel_reader import PanelReadError, read_panel
 from cards import (
     MIXER_ROLES, describe as describe_roles, mixer_card, parse_roles,
     room_card,
@@ -520,16 +525,39 @@ PANEL_FILE = Path("/config/crestron-cip/panel.json")
 
 
 async def upload_panel(request: web.Request) -> web.Response:
-    """Read a .c3p or .vtz and keep the faceplate it describes."""
+    """Read a .c3p or .vtz and keep the faceplate it describes.
+
+    The archive reader is tried first, because it reads the panel's own
+    layout — where every control sits, what it says, which subpage places
+    it — and a card built from that is the screen the operator already
+    knows. `panel_import` is the fallback for a `.vtp`, which carries the
+    joins but no usable geometry.
+
+    `page` picks which of the panel's screens to draw; without it the
+    busiest one is used.
+    """
     body = await request.read()
     if not body:
         raise web.HTTPBadRequest(reason="no file received")
     name = request.query.get("name", "Panel")
+    page = request.query.get("page") or None
+
+    panel: dict | None = None
     try:
-        objects = read_objects(body)
-        faceplate = to_faceplate(objects, name)
-    except PanelError as err:
-        raise web.HTTPBadRequest(reason=str(err))
+        panel = read_panel(body)
+        faceplate = build_faceplate(panel, page=page, name=name)
+        source = "project"
+    except PanelReadError:
+        # Not an archive, or no Environment.xml in it. A .vtp still has
+        # joins worth having, just nothing to lay them out with.
+        try:
+            faceplate = to_faceplate(read_objects(body), name)
+            source = "joins-only"
+        except PanelError as err:
+            raise web.HTTPBadRequest(reason=str(err))
+        except Exception as err:
+            logger.warning("Could not read panel: %s", err)
+            raise web.HTTPBadRequest(reason=f"could not read the panel: {err}")
     except Exception as err:  # malformed archives are the user's reality
         logger.warning("Could not read panel: %s", err)
         raise web.HTTPBadRequest(reason=f"could not read the panel: {err}")
@@ -548,13 +576,30 @@ async def upload_panel(request: web.Request) -> web.Response:
     PANEL_FILE.write_text(json.dumps(
         {"name": name, "faceplate": faceplate, "processor": assignment}, indent=1))
 
-    roles = sorted({r["role"] for r in faceplate["regions"] if r.get("role")})
+    summary = summarise_faceplate(faceplate)
     result = {
         "ok": True, "name": name,
+        "source": source,
         "size": faceplate["size"],
-        "regions": len(faceplate["regions"]),
-        "joins": roles,
+        "regions": summary["regions"],
+        "kinds": summary["kinds"],
+        "joins": summary["bindable"],
+        "pages": faceplate.get("pages", []),
     }
+    if panel is not None:
+        # Which screens there were to choose from, so the import page can
+        # offer the others rather than silently picking one.
+        result["screens"] = candidate_screens(panel)
+        result["chosen_screen"] = page or main_screen(panel)
+        # Everything the reader had to guess, said out loud.
+        result["notes"] = faceplate.get("import_notes", {})
+        # Repeated join arithmetic says which controls are one zone
+        # repeated, which is what turns 39 controls into "3 zones".
+        try:
+            result["zones"] = propose(panel).get("families", [])
+        except Exception as err:  # grouping is a convenience, never fatal
+            logger.debug("Grouping declined: %s", err)
+            result["zones"] = []
 
     # Assigning it is the whole point: a panel project already says what
     # every join is, so nobody should have to enter it a second time.

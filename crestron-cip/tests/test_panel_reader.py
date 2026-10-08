@@ -261,3 +261,137 @@ def test_what_binds_a_join_is_reported():
     entry = pr.joins_of(panel)[0]
     assert entry["bound_by"][0]["name"] == "Volume Up"
     assert entry["bound_by"][0]["property"] == "DigitalPressJoin"
+
+
+# -- labels, pages and references ---------------------------------------
+#
+# Added after the generator was built on top of this reader and three of
+# these came back as wrong output rather than as a failing test.
+
+def test_the_words_come_out_of_a_label():
+    # VT Pro-e stores labels as HTML because the panel renders mixed fonts
+    # and sizes in one string.
+    parsed = pr.parse_label(
+        '<P><FONT size="36" face="Crestron Unicode" color="#000000">'
+        "Source Select</FONT></P>"
+    )
+    assert parsed["text"] == "Source Select"
+    assert parsed["size"] == 36
+    assert parsed["indirect"] == []
+
+
+def test_indirect_text_names_the_join_it_arrives_on():
+    # <cips>N?placeholder</cips> is Crestron's indirect text marker: N is
+    # the serial join the processor writes to, and the placeholder is only
+    # what the designer typed so the editor had something to draw.
+    parsed = pr.parse_label('<FONT size="22"><cips>211?Source Name</cips></FONT>')
+    assert parsed["indirect"] == [{"join": 211, "placeholder": "Source Name"}]
+    assert parsed["static"] == ""
+
+
+def test_a_multi_state_label_keeps_its_sentence_in_order():
+    # A joining button reads "Join <room> with <room>" — static words
+    # wrapped around indirect ones. Dropping either half loses the sense.
+    parsed = pr.parse_label(
+        "<cips>1006?Join</cips> <cips>1004?Room 1</cips> with <cips>1005?Room 2</cips>"
+    )
+    assert parsed["text"] == "Join Room 1 with Room 2"
+    assert [i["join"] for i in parsed["indirect"]] == [1006, 1004, 1005]
+
+
+def test_the_panel_size_falls_back_to_the_ini():
+    # No real panel carries Width/Height on the project element, and a
+    # faceplate cannot be laid out without the canvas.
+    data = archive(
+        panel_xml(child("B", "Button", 10, 10,
+                        "<DigitalPressJoin>1</DigitalPressJoin>"))
+        .replace("<Width>1280</Width><Height>800</Height>", ""),
+        ini="[Startup]\nwidth=1280\nheight=800\n",
+    )
+    assert pr.read_panel(data)["size"] == (1280, 800)
+
+
+def test_every_subpage_gets_its_own_key():
+    # VT Pro-e never made anyone name a subpage, so every one of them is
+    # called "Subpage". Under one key, nine of them put every confirmation
+    # popup on top of the main screen.
+    pages = "".join(
+        f"""<Page><ControlName>Subpage</ControlName>
+              <ObjectName>Subpage</ObjectName>
+              <Properties><Width>1280</Width><Height>580</Height>
+                <Children>{child(f"B{n}", "Button", 10, 10,
+                                 f"<DigitalPressJoin>{n}</DigitalPressJoin>")}
+                </Children></Properties></Page>"""
+        for n in (1, 2, 3)
+    )
+    xml = f"""<?xml version="1.0"?>
+<Crestron><Properties><Pages>{pages}</Pages></Properties></Crestron>"""
+    panel = pr.read_panel(archive(xml, ini="[Startup]\nwidth=1280\nheight=800\n"))
+    assert sorted(panel["pages"]) == ["Subpage", "Subpage 2", "Subpage 3"]
+    assert len(panel["objects"]) == 3
+
+
+def test_a_control_shared_by_two_pages_survives_on_both():
+    # Collapsing duplicates across pages lost the control from every page
+    # but the first, which is how a whole page went missing.
+    same = child("B", "Button", 10, 10, "<DigitalPressJoin>1</DigitalPressJoin>")
+    pages = "".join(
+        f"""<Page><ObjectName>{name}</ObjectName>
+              <Properties><Width>1280</Width><Height>800</Height>
+                <Children>{same}</Children></Properties></Page>"""
+        for name in ("Main", "Other")
+    )
+    xml = f"""<?xml version="1.0"?>
+<Crestron><Properties><Pages>{pages}</Pages></Properties></Crestron>"""
+    panel = pr.read_panel(archive(xml, ini="[Startup]\nwidth=1280\nheight=800\n"))
+    assert {o["page"] for o in panel["objects"]} == {"Main", "Other"}
+
+
+def test_a_repeated_control_on_one_page_is_still_collapsed():
+    # The reason the dedupe exists: a panel draws the same button once per
+    # state, and three copies is a drawing detail, not three controls.
+    same = child("B", "Button", 10, 10, "<DigitalPressJoin>1</DigitalPressJoin>")
+    data = archive(panel_xml(same * 3))
+    assert len(pr.read_panel(data)["objects"]) == 1
+
+
+def test_where_the_main_page_puts_its_subpages_is_read():
+    # A reference is tagged <Subpage>, not <Child>. Reading only <Child>
+    # left the main page looking empty.
+    xml = """<?xml version="1.0"?>
+<Crestron><Properties><Pages>
+  <Page><ObjectName>3.0-Main</ObjectName><Properties>
+    <Width>1280</Width><Height>800</Height>
+    <Children>
+      <Subpage>
+        <ControlName>Subpage Reference</ControlName>
+        <ObjectName>3.4-Vol-Ctrl</ObjectName>
+        <Properties>
+          <Left>871</Left><Top>120</Top>
+          <Width>409</Width><Height>580</Height>
+          <DigitalJoin>34</DigitalJoin>
+        </Properties>
+      </Subpage>
+    </Children>
+  </Properties></Page>
+</Pages></Properties></Crestron>"""
+    panel = pr.read_panel(archive(xml, ini="[Startup]\nwidth=1280\nheight=800\n"))
+    assert len(panel["references"]) == 1
+    ref = panel["references"][0]
+    assert ref["name"] == "3.4-Vol-Ctrl"
+    assert (ref["left"], ref["top"], ref["width"], ref["height"]) == (871, 120, 409, 580)
+    assert ref["join"] == 34
+    assert ref["page"] == "3.0-Main"
+
+
+def test_a_subpage_is_recorded_as_a_subpage_not_a_page():
+    xml = """<?xml version="1.0"?>
+<Crestron><Properties><Pages>
+  <Page><ControlName>Subpage</ControlName><ObjectName>Subpage</ObjectName>
+    <Properties><Width>409</Width><Height>580</Height><Children/></Properties>
+  </Page>
+</Pages></Properties></Crestron>"""
+    panel = pr.read_panel(archive(xml, ini="[Startup]\nwidth=1280\nheight=800\n"))
+    meta = panel["page_meta"][0]
+    assert meta["kind"] == "subpage"
+    assert (meta["width"], meta["height"]) == (409, 580)

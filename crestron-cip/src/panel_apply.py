@@ -50,22 +50,59 @@ def attach_processor(hub: Any, name: str, host: str, ipid: int,
     return "added"
 
 
+# Which bus a generated role name sits on. Faceplates generated from a
+# panel project use readable role names, because the role is what the card
+# editor puts in front of whoever is binding entities to it — "button_101"
+# says what to look for and "d101" does not. The bus still has to be
+# recoverable from the name, so the prefix carries it.
+ROLE_SIGNAL = {
+    "button": "d",
+    "lamp": "d",
+    "level": "a",
+    "fader": "a",
+    "text": "s",
+}
+
+
+def parse_role(key: str) -> tuple[str, int] | None:
+    """The bus and number a role refers to, or None if it names no join.
+
+    Two spellings are accepted. The terse `d101` is what hand-written
+    faceplates and everything stored before the generator existed use, so
+    it keeps working. The generated `button_101` is the same thing said out
+    loud. A role ending `_x7` is a control with no join at all — it is
+    positional, deliberately unbindable, and must not create a join.
+    """
+    if not key:
+        return None
+    prefix, _, tail = key.rpartition("_")
+    if prefix:
+        signal = ROLE_SIGNAL.get(prefix)
+        if signal is None or not tail.isdigit() or int(tail) < 1:
+            return None
+        return signal, int(tail)
+    if len(key) < 2 or key[0] not in "das" or not key[1:].isdigit():
+        return None
+    # Join 0 means "none" throughout Crestron's tooling, never join zero.
+    if int(key[1:]) < 1:
+        return None
+    return key[0], int(key[1:])
+
+
 def panel_joins(faceplate: dict) -> list[tuple[str, int, str]]:
     """Every join the panel uses, as (signal, number, label)."""
     seen: dict[tuple[str, int], str] = {}
     for region in faceplate.get("regions", []):
         for key in (region.get("role"), region.get("target")):
-            if not key or len(key) < 2 or key[0] not in "das":
+            parsed = parse_role(key)
+            if parsed is None:
                 continue
-            try:
-                number = int(key[1:])
-            except ValueError:
-                continue
+            signal, number = parsed
             label = region.get("text") or ""
             # A region with a caption names its join better than one
             # without, so a later labelled region wins.
-            if (key[0], number) not in seen or label:
-                seen[(key[0], number)] = label
+            if (signal, number) not in seen or label:
+                seen[(signal, number)] = label
     return [(signal, number, label)
             for (signal, number), label in sorted(seen.items())]
 
