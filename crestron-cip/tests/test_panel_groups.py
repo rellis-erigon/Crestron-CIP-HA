@@ -167,7 +167,7 @@ def test_joins_outside_any_family_are_still_reported():
 
 def test_an_empty_panel_proposes_nothing_without_failing():
     out = pg.propose(panel([]))
-    assert out == {"families": [], "unclaimed": []}
+    assert out == {"families": [], "unclaimed": [], "controls": []}
 
 
 def test_controls_with_no_geometry_do_not_break_the_proposal():
@@ -176,3 +176,59 @@ def test_controls_with_no_geometry_do_not_break_the_proposal():
     for c in controls:
         c["left"] = c["top"] = None
     assert pg.propose(panel(controls))["families"]
+
+
+# -- Small panels ------------------------------------------------------
+#
+# A bar is one fader and four buttons. There is nothing repeated to
+# detect, and returning only families left such a panel with nothing to
+# build a card from — which breaks the whole point of the import.
+
+def bar_panel():
+    controls = [
+        control("Fader", 1, bus="analog", left=74, top=57,
+                kind="Fader Slider Vertical"),
+        control("Btn1", 1, left=20, top=308),
+        control("Btn2", 2, left=21, top=387),
+        control("Btn3", 3, left=21, top=471),
+        control("Btn4", 4, left=21, top=555),
+    ]
+    return panel(controls)
+
+
+def test_a_panel_with_no_repeats_finds_no_family():
+    assert pg.propose(bar_panel())["families"] == []
+
+
+def test_but_every_control_is_still_returned():
+    """The families are an accelerator, not the only route."""
+    out = pg.propose(bar_panel())
+    assert len(out["controls"]) == 5
+    names = {c["name"] for c in out["controls"]}
+    assert names == {"Fader", "Btn1", "Btn2", "Btn3", "Btn4"}
+
+
+def test_a_controls_joins_carry_their_bus_and_property():
+    out = pg.propose(bar_panel())
+    fader = next(c for c in out["controls"] if c["name"] == "Fader")
+    assert fader["joins"] == [
+        {"property": "AnalogFeedbackJoin", "bus": "analog",
+         "join": 1, "reserved": False}]
+
+
+def test_controls_come_back_in_reading_order():
+    """Top to bottom, left to right — the order somebody sees them in."""
+    out = pg.propose(bar_panel())
+    tops = [c["top"] for c in out["controls"]]
+    assert tops == sorted(tops)
+
+
+def test_a_big_panel_returns_both_families_and_controls():
+    out = pg.propose(panel(zones([210, 220, 230])))
+    assert out["families"]
+    assert len(out["controls"]) == 9
+
+
+def test_geometry_is_carried_so_a_card_can_be_laid_out():
+    out = pg.propose(bar_panel())
+    assert all(c["left"] is not None and c["width"] for c in out["controls"])

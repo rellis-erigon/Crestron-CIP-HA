@@ -31,11 +31,16 @@ walk stops at a nested `Children`.
 **An export is not a panel.** A `.vtz` or `.c3p` produced from an
 unprogrammed project parses perfectly and yields almost nothing: its
 `Pages` section holds *template* definitions for Page and Subpage whose
-join groups are defaults, and `XPanel.ini` says `PageCount=0`. Two
-panels' project files on one estate had 52 objects each and every join at
-zero. So an empty result is reported as such rather than as a failure,
-with the reason, because the difference matters to whoever has to go and
-find a better file.
+join groups are defaults. Two project files on one estate had 52 objects
+each and every join at zero. So an empty result is reported as such
+rather than as a failure, because the difference matters to whoever has
+to go and find a better file.
+
+The only trustworthy test for that is whether any control carries a
+join. `PageCount` in `XPanel.ini` looked like a shortcut and is not one:
+it reads 0 in every real panel dump taken off this estate's hardware,
+including one with 27 digital joins. It is reported as information and
+nothing is decided on it.
 """
 from __future__ import annotations
 
@@ -236,7 +241,9 @@ def summarise(panel: dict) -> dict:
 
     `unprogrammed` is the case worth calling out by name: the file is
     perfectly readable and has no joins in it, which means somebody needs
-    to find a different file rather than debug this one.
+    to find a different file rather than debug this one. It is decided on
+    the content — whether anything binds a join — because the header
+    field that looked like a shortcut reads 0 on real panels too.
     """
     controls = panel["controls"]
     by_bus: dict[str, set[int]] = {"digital": set(), "analog": set(), "serial": set()}
@@ -247,6 +254,8 @@ def summarise(panel: dict) -> dict:
                 reserved += 1
             else:
                 by_bus[detail["bus"]].add(detail["join"])
+    # Information only. It reads 0 on real panels as well as on empty
+    # exports, so it decides nothing.
     page_count = _as_int(panel["project"].get("PageCount"))
     return {
         "objects": len(panel["objects"]),
@@ -258,7 +267,6 @@ def summarise(panel: dict) -> dict:
         "pages": len(panel["pages"]),
         "unprogrammed": bool(panel["objects"]) and not controls,
         "declared_page_count": page_count,
-        "looks_like_an_empty_export": page_count == 0,
     }
 
 

@@ -253,4 +253,26 @@ def propose(panel: dict) -> dict:
         for join, members in sorted(_bus_joins(panel, bus).items()):
             if (bus, join) not in claimed:
                 loose.append({"bus": bus, "join": join, "members": members})
-    return {"families": out, "unclaimed": loose}
+
+    # Every control, flat, whatever the families found. A small panel has
+    # no repeats to detect — a bar is one fader and four buttons — and
+    # returning only families would leave it with nothing to build a card
+    # from. The families are an accelerator for big repetitive panels,
+    # not the only way through.
+    controls = [
+        {
+            "name": c["name"], "control": c["control"], "page": c["page"],
+            "left": c.get("left"), "top": c.get("top"),
+            "width": c.get("width"), "height": c.get("height"),
+            "joins": [
+                {"property": k, "bus": v["bus"], "join": v["join"],
+                 "reserved": v["reserved"]}
+                for k, v in sorted(c["joins"].items())
+            ],
+        }
+        for c in sorted(
+            panel.get("controls") or [],
+            key=lambda c: (c.get("top") or 0, c.get("left") or 0),
+        )
+    ]
+    return {"families": out, "unclaimed": loose, "controls": controls}

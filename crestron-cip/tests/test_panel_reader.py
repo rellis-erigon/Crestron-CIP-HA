@@ -202,24 +202,25 @@ def test_two_controls_at_the_same_place_with_different_joins_both_count():
 
 # -- Telling an empty export from a real panel --------------------------
 
-def test_an_export_with_no_pages_is_named_as_such():
-    """A .vtz from an unprogrammed project parses perfectly and yields
-    almost nothing. Saying so is the difference between the user going to
-    find a better file and debugging this one."""
-    data = archive(panel_xml(child("B", "Button", 0, 0, "")),
-                   ini="[XPanel]\nwidth=1280\nheight=800\n"
-                       "[FileAttribute]\nPageCount=0\n")
-    summary = pr.summarise(pr.read_panel(data))
-    assert summary["declared_page_count"] == 0
-    assert summary["looks_like_an_empty_export"]
-
-
-def test_a_real_panel_is_not_flagged_as_an_empty_export():
+def test_page_count_decides_nothing():
+    """It looked like a shortcut for "this export is empty" and is not
+    one: it reads 0 in every real panel dump taken off this estate,
+    including one with 27 digital joins. Deciding on it told users their
+    working panel was empty."""
     data = archive(panel_xml(child("B", "Button", 0, 0,
                                    "<DigitalPressJoin>5</DigitalPressJoin>")),
-                   ini="[FileAttribute]\nPageCount=3\n")
+                   ini="[FileAttribute]\nPageCount=0\n")
     summary = pr.summarise(pr.read_panel(data))
-    assert not summary["looks_like_an_empty_export"]
+    assert summary["declared_page_count"] == 0     # reported
+    assert not summary["unprogrammed"]             # but not believed
+    assert summary["controls"] == 1
+
+
+def test_emptiness_is_decided_on_whether_anything_binds_a_join():
+    empty = archive(panel_xml(child("B", "Button", 0, 0,
+                                    "<DigitalPressJoin>0</DigitalPressJoin>")),
+                    ini="[FileAttribute]\nPageCount=3\n")
+    assert pr.summarise(pr.read_panel(empty))["unprogrammed"]
 
 
 def test_objects_without_any_join_are_reported_as_unprogrammed():
