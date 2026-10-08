@@ -3,6 +3,47 @@
 The add-on and the Home Assistant integration are released as a matched
 pair and share a version number. CI fails the build if they drift.
 
+## 0.12.0 — 2026-10-09
+
+- **Feature**: An imported panel now produces a card that looks like the
+  panel. The reader already knew which joins a panel binds; it did not
+  know the layout, so a card was a list of controls rather than the
+  screen somebody already knows how to use. The same project file carries
+  every control's position, size, colour and the words it shows, and a
+  faceplate is generated from it. Each state of the panel's main screen —
+  the overlapping subpages a visibility join switches between — becomes a
+  page of the card.
+
+  Nothing is invented. A control whose purpose cannot be read off the
+  file is drawn in the right place and does nothing. A button wired only
+  to a reserved join flips a page on the panel itself and can never be
+  driven from Home Assistant, so it is not offered as something that can
+  be. Where the file genuinely does not say — two same-sized popups that
+  cannot be told apart — the guess is reported rather than hidden.
+
+- **Fix**: Four reader faults, each of which produced confident wrong
+  output rather than an error. Every subpage in a real export is called
+  "Subpage", so nine of them collapsed into one key and stacked every
+  popup on the main screen. The duplicate-control dedupe spanned pages,
+  which deleted shared controls from every page but the first and left a
+  whole page empty. Subpage references are tagged `<Subpage>` rather than
+  `<Child>`, so the layout was missed entirely. Labels are HTML with the
+  serial join marked inside them, so stripping the tags lost the join and
+  dropping the markers lost the sentence of a multi-state button.
+
+- **Fix**: Panel size is read from `XPanel.ini`. No real panel carries it
+  on the project element, and a card cannot be laid out without it.
+
+- **Change**: Join roles are readable — `button_101`, `level_211` —
+  because the role is what the card editor shows whoever is binding
+  entities to it. The terse `d101` form is still understood, so panels
+  imported before this keep working.
+
+- **Known gap**: A Subpage Reference List instantiates its subpage once
+  per zone and the project file records the list, not the instances. Such
+  a subpage is offered as a screen in its own right, which is what it is,
+  rather than placed by guesswork.
+
 ## 0.2.0 — 2026-09-24
 
 - **Feature**: Force a re-scan of joins, from the panel or via
