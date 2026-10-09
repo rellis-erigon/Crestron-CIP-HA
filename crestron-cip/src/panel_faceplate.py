@@ -183,7 +183,12 @@ def region_for(obj: dict[str, Any], index: int) -> dict[str, Any] | None:
 
     if kind == "bar":
         base["role"] = _role("level", _first_join(obj, "analog"), index)
-        base["max"] = 65535  # Crestron analog joins are 16-bit.
+        # Crestron analog joins are 16-bit, which is all the project file
+        # says. Where the join is passed through to something that states
+        # a real scale — a Q-SYS gain in dB — that is the truth, and this
+        # is only the fallback.
+        base["max"] = 65535
+        base["auto_range"] = True
         return base
 
     if kind == "fader":

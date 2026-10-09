@@ -3,6 +3,15 @@
 The add-on and the Home Assistant integration are released as a matched
 pair and share a version number. CI fails the build if they drift.
 
+## 0.13.2 — 2026-10-09
+
+- **Change**: A generated level bar now takes its scale from whatever it
+  is bound to, where that states one. The project file says only that an
+  analog join is 16 bits, so the bar guesses 0-65535; the same join is
+  often passed through to a gain reading in dB over a much smaller
+  range, and against the guess every normal level sits just off the
+  bottom of the bar.
+
 ## 0.13.1 — 2026-10-09
 
 - **Fix**: The volume and microphone strip was put on a tab of its own.
