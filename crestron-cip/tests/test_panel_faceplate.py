@@ -526,3 +526,87 @@ def test_crestron_blue_is_judged_dark():
     assert pf._is_light("#0071bc") is False
     assert pf._is_light("#ffffff") is True
     assert pf._is_light("") is True
+
+
+# -- what is on screen at once ------------------------------------------
+
+def test_a_gated_subpage_follows_its_own_join():
+    # The panel raises a digital join and the subpage appears. Following
+    # it is the only thing that reproduces the real screen, because which
+    # combination is up is a fact about the running program.
+    dump = panel(
+        [obj(page="Sub", joins=digital(1))],
+        page_meta=[MAIN, subpage("Sub", 1000, 580, 1)],
+        references=[reference("3.1-Source", 0, 120, 1000, 580, 31, 0)],
+    )
+    fp = pf.build_faceplate(dump, page="3.0-Main")
+    region = next(r for r in fp["regions"] if r["kind"] == "button")
+    assert region["visible_role"] == "lamp_31"
+
+
+def test_an_always_visible_subpage_has_no_visibility_role():
+    dump = panel(
+        [obj(page="Bar", joins=digital(1))],
+        page_meta=[MAIN, subpage("Bar", 1280, 120, 1)],
+        references=[reference("TopBar", 0, 0, 1280, 120, None, 0)],
+    )
+    fp = pf.build_faceplate(dump, page="3.0-Main")
+    assert "visible_role" not in fp["regions"][0]
+
+
+def test_subpages_side_by_side_are_shown_together():
+    # The real failure this came from: the source list and the volume
+    # strip beside it are two subpages on two joins, and treating every
+    # gated subpage as an alternative put the volume and microphone
+    # controls on a tab of their own.
+    dump = panel(
+        [obj(page="Src", joins=digital(1)), obj(page="Vol", joins=digital(2))],
+        page_meta=[MAIN, subpage("Src", 1000, 580, 1), subpage("Vol", 280, 580, 2)],
+        references=[reference("3.1-Source", 0, 120, 1000, 580, 31, 0),
+                    reference("3.2-Volume", 1000, 120, 280, 580, 32, 1)],
+    )
+    fp = pf.build_faceplate(dump, page="3.0-Main")
+    assert fp["page_companions"]["3.1-Source"] == ["3.2-Volume"]
+    assert fp["page_companions"]["3.2-Volume"] == ["3.1-Source"]
+
+
+def test_subpages_over_the_same_ground_are_alternatives():
+    dump = panel(
+        [obj(page="A", joins=digital(1)), obj(page="B", joins=digital(2))],
+        page_meta=[MAIN, subpage("A", 1280, 580, 1), subpage("B", 1280, 580, 2)],
+        references=[reference("3.5-Join", 0, 120, 1280, 580, 35, 0),
+                    reference("3.6-Shutdown", 0, 120, 1280, 580, 36, 1)],
+    )
+    fp = pf.build_faceplate(dump, page="3.0-Main")
+    assert fp["page_companions"]["3.5-Join"] == []
+
+
+def test_the_pairing_that_fills_the_screen_wins():
+    # The joined source list is 871 wide and its volume strip 409, and the
+    # pair tile exactly. The 280-wide strip from the unjoined layout also
+    # fits beside 871 — and leaves a gap the panel does not have.
+    dump = panel(
+        [obj(page="S", joins=digital(1)), obj(page="V", joins=digital(2)),
+         obj(page="V2", joins=digital(3))],
+        page_meta=[MAIN, subpage("S", 871, 580, 1), subpage("V", 409, 580, 2),
+                   subpage("V2", 280, 580, 3)],
+        references=[reference("3.3-SrcJoined", 0, 120, 871, 580, 33, 0),
+                    reference("3.4-VolJoined", 871, 120, 409, 580, 34, 1),
+                    reference("3.2-VolUnjoined", 1000, 120, 280, 580, 32, 2)],
+    )
+    fp = pf.build_faceplate(dump, page="3.0-Main")
+    assert fp["page_companions"]["3.3-SrcJoined"] == ["3.4-VolJoined"]
+
+
+def test_a_popup_backdrop_disappears_with_its_popup():
+    # A grey sheet left behind when the popup goes would cover the screen.
+    dump = panel(
+        [obj(page="Sub", joins=digital(1))],
+        page_meta=[MAIN, {"key": "Sub", "name": "Subpage", "kind": "subpage",
+                          "width": 1280, "height": 580, "background": "#53514f",
+                          "opaque": True, "order": 1}],
+        references=[reference("3.5-Confirm", 0, 120, 1280, 580, 35, 0)],
+    )
+    fp = pf.build_faceplate(dump, page="3.0-Main")
+    plate = next(r for r in fp["regions"] if r["id"].startswith("backdrop_"))
+    assert plate["visible_role"] == "lamp_35"

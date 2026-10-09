@@ -3,6 +3,21 @@
 The add-on and the Home Assistant integration are released as a matched
 pair and share a version number. CI fails the build if they drift.
 
+## 0.13.1 — 2026-10-09
+
+- **Fix**: The volume and microphone strip was put on a tab of its own.
+  On the panel it sits beside the source list: two subpages, in two
+  places, raised by two different joins, both on screen at once. Every
+  gated subpage was treated as an alternative, so half of each screen was
+  hidden behind a tab nobody would think to press.
+
+  Each subpage now carries the join it is shown by, and the card follows
+  it — which is exactly what the panel does. Until those joins are
+  exposed the card falls back to showing the chosen subpage plus whatever
+  tiles beside it, so the layout is right either way. The screen list
+  collapses to one entry per screen rather than one per subpage, and
+  disappears once the joins are driving it.
+
 ## 0.13.0 — 2026-10-09
 
 - **Feature**: An imported panel now draws its own artwork. The layout

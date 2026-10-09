@@ -226,6 +226,45 @@ def region_for(obj: dict[str, Any], index: int) -> dict[str, Any] | None:
     return base
 
 
+def _overlaps(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Whether two placed rectangles cover any of the same screen."""
+    return not (
+        a["left"] + a["width"] <= b["left"]
+        or b["left"] + b["width"] <= a["left"]
+        or a["top"] + a["height"] <= b["top"]
+        or b["top"] + b["height"] <= a["top"]
+    )
+
+
+def companions(rects: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+    """Which states are on screen together, for when the joins are not.
+
+    Two subpages that cover the same ground are alternatives; two that sit
+    side by side are shown at once. Only the processor knows which
+    combination is up, so once the visibility joins are bound the card
+    follows them and this is unused. Before that it is the difference
+    between a recognisable screen and a source list with its volume strip
+    on another tab.
+
+    Largest first, which is what makes a layout tile: the joined source
+    list is 871 wide and the volume strip beside it 409, and the pair fill
+    the screen exactly. Picking the other 280-wide strip instead would fit
+    too, and leave a gap where the panel has none.
+    """
+    order = sorted(rects, key=lambda k: -rects[k]["width"] * rects[k]["height"])
+    result: dict[str, list[str]] = {}
+    for key in rects:
+        chosen = [key]
+        for other in order:
+            if other == key:
+                continue
+            if any(_overlaps(rects[other], rects[c]) for c in chosen):
+                continue
+            chosen.append(other)
+        result[key] = [c for c in chosen if c != key]
+    return result
+
+
 def _is_light(colour: str) -> bool:
     """Whether text on this background should be dark.
 
@@ -259,6 +298,7 @@ def build_faceplate(
     screen = compose_screen(panel, page) if page else {
         "size": panel.get("size"), "objects": panel.get("objects", []),
         "states": [], "ambiguous": [], "unresolved": [], "orphans": [],
+        "companions": {},
     }
     width, height = screen["size"] or (None, None)
 
@@ -307,6 +347,8 @@ def build_faceplate(
         if state:
             plate["page"] = state
             plate["group"] = state
+            if ref["join"]:
+                plate["visible_role"] = f"lamp_{ref['join']}"
         regions.append(plate)
 
     for index, obj in enumerate(screen["objects"]):
@@ -321,6 +363,11 @@ def build_faceplate(
             # Everything from one subpage lives and dies together — hiding
             # half a popup leaves the other half floating.
             region["group"] = state
+            join = obj.get("visible_join")
+            if join:
+                # The panel shows this subpage when the join is high. So
+                # does the card, once that join has an entity behind it.
+                region["visible_role"] = f"lamp_{join}"
         else:
             region.pop("page", None)
         regions.append(region)
@@ -360,7 +407,20 @@ def build_faceplate(
         ),
     }
     if screen["states"]:
-        faceplate["pages"] = screen["states"]
+        # One entry per screen the panel actually has, not one per
+        # subpage. The source list and the volume strip beside it are a
+        # single screen to anybody using it, and offering both as choices
+        # that draw the same thing reads as a bug.
+        layouts: list[str] = []
+        seen: set[frozenset[str]] = set()
+        for state in screen["states"]:
+            together = frozenset([state, *screen["companions"].get(state, [])])
+            if together in seen:
+                continue
+            seen.add(together)
+            layouts.append(state)
+        faceplate["pages"] = layouts
+        faceplate["page_companions"] = screen["companions"]
     # Carried so the import screen can be honest about what was guessed.
     faceplate["import_notes"] = {
         "page": page,
@@ -455,6 +515,7 @@ def compose_screen(panel: dict[str, Any], page: str) -> dict[str, Any]:
 
     placed: list[dict[str, Any]] = []
     states: list[str] = []
+    rects: dict[str, dict[str, Any]] = {}
 
     # The page's own controls sit directly on it, already absolute.
     for obj in objects_by_page.get(page, []):
@@ -472,6 +533,11 @@ def compose_screen(panel: dict[str, Any], page: str) -> dict[str, Any]:
         state = ref["name"] if ref["join"] else None
         if state and state not in states:
             states.append(state)
+        if state:
+            rects[state] = {
+                "left": ref["left"] or 0, "top": ref["top"] or 0,
+                "width": ref["width"] or 0, "height": ref["height"] or 0,
+            }
         for obj in objects_by_page.get(target, []):
             placed.append({
                 **obj,
@@ -481,6 +547,16 @@ def compose_screen(panel: dict[str, Any], page: str) -> dict[str, Any]:
                 "source": target,
                 "visible_join": ref["join"],
             })
+
+    # Subpages whose rectangles do not overlap are shown at the same time,
+    # not instead of one another — a source list and the volume strip
+    # beside it are two subpages on two joins. Treating every gated
+    # subpage as an alternative put the volume and microphone controls on
+    # a tab of their own, where on the panel they sit alongside.
+    #
+    # Which combination is on screen is decided by the processor, so the
+    # regions carry their join and follow it. These names only matter
+    # before the joins are exposed.
 
     meta = next((m for m in panel.get("page_meta", []) if m["key"] == page), None)
     size = (
@@ -512,6 +588,7 @@ def compose_screen(panel: dict[str, Any], page: str) -> dict[str, Any]:
         "ambiguous": links["ambiguous"],
         "unresolved": links["unresolved"],
         "orphans": orphans,
+        "companions": companions(rects),
     }
 
 
