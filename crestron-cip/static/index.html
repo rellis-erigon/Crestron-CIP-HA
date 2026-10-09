@@ -896,6 +896,188 @@ function describeNotes(summary) {
   return lines;
 }
 
+// --- Sending only the part of the project that is read -----------------
+//
+// A compiled panel is tens of megabytes, nearly all of it Flash runtime
+// and theme artwork. Home Assistant's ingress proxy caps a request body
+// well below that, so uploading the file whole fails with "content too
+// large" before the add-on ever sees it — and raising that cap is not
+// ours to do.
+//
+// The reader opens exactly two files out of the archive. Extracting those
+// here takes a 26 MB project to about 40 KB, and the add-on reads the
+// result byte-for-byte identically because it is still a zip with the
+// same two entries in it. No server change, and the .vtp path is
+// untouched.
+
+const WANTED = ["swf/Environment.xml", "XPanel.ini"];
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i += 1) {
+    let c = i;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i += 1) {
+    c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** Entries of a zip, read from its central directory. */
+function zipEntries(buffer) {
+  const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  // The end-of-central-directory record is last, after a comment of up to
+  // 64 KB, so it has to be searched for backwards.
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= 0 && i > bytes.length - 65558; i -= 1) {
+    if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error("not a zip archive");
+  const count = view.getUint16(eocd + 10, true);
+  let at = view.getUint32(eocd + 16, true);
+  if (at === 0xffffffff) throw new Error("zip64 archive");
+
+  const entries = [];
+  for (let n = 0; n < count; n += 1) {
+    if (view.getUint32(at, true) !== 0x02014b50) break;
+    const nameLength = view.getUint16(at + 28, true);
+    const extraLength = view.getUint16(at + 30, true);
+    const commentLength = view.getUint16(at + 32, true);
+    entries.push({
+      name: new TextDecoder().decode(
+        bytes.subarray(at + 46, at + 46 + nameLength)),
+      method: view.getUint16(at + 10, true),
+      compressedSize: view.getUint32(at + 20, true),
+      localOffset: view.getUint32(at + 42, true),
+    });
+    at += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+async function zipRead(buffer, entry) {
+  const view = new DataView(buffer);
+  if (view.getUint32(entry.localOffset, true) !== 0x04034b50) {
+    throw new Error("bad local header");
+  }
+  // The local header repeats the name and extra fields, and its extra
+  // field is not always the same length as the central one — reading the
+  // central length here lands in the middle of the data.
+  const start = entry.localOffset + 30
+    + view.getUint16(entry.localOffset + 26, true)
+    + view.getUint16(entry.localOffset + 28, true);
+  const raw = new Uint8Array(buffer, start, entry.compressedSize);
+  if (entry.method === 0) return raw;
+  if (entry.method !== 8) throw new Error(`compression method ${entry.method}`);
+  const stream = new Blob([raw]).stream()
+    .pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/**
+ * A zip holding the given files.
+ *
+ * Entries are deflated where the browser can, and stored where it
+ * cannot. An Environment.xml is XML and compresses about twenty-five to
+ * one, which matters on a panel with a few hundred objects: stored, that
+ * file alone can approach the size limit this whole step exists to stay
+ * under.
+ */
+async function zipWrite(files) {
+  const encoder = new TextEncoder();
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const [name, data] of files) {
+    const nameBytes = encoder.encode(name);
+    // The checksum is always of the original bytes, never the deflated
+    // ones — a zip that gets this wrong unpacks and then fails its own
+    // integrity check.
+    const sum = crc32(data);
+    let body = data;
+    let method = 0;
+    if (typeof CompressionStream === "function") {
+      try {
+        const stream = new Blob([data]).stream()
+          .pipeThrough(new CompressionStream("deflate-raw"));
+        const packed = new Uint8Array(await new Response(stream).arrayBuffer());
+        if (packed.length < data.length) { body = packed; method = 8; }
+      } catch { /* stored is always valid */ }
+    }
+    const local = new Uint8Array(30 + nameBytes.length + body.length);
+    const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true);
+    lv.setUint16(4, 20, true);
+    lv.setUint16(8, method, true);
+    lv.setUint32(14, sum, true);
+    lv.setUint32(18, body.length, true);
+    lv.setUint32(22, data.length, true);
+    lv.setUint16(26, nameBytes.length, true);
+    local.set(nameBytes, 30);
+    local.set(body, 30 + nameBytes.length);
+    locals.push(local);
+
+    const central = new Uint8Array(46 + nameBytes.length);
+    const cv = new DataView(central.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, 20, true);
+    cv.setUint16(6, 20, true);
+    cv.setUint16(10, method, true);
+    cv.setUint32(16, sum, true);
+    cv.setUint32(20, body.length, true);
+    cv.setUint32(24, data.length, true);
+    cv.setUint16(28, nameBytes.length, true);
+    cv.setUint32(42, offset, true);
+    central.set(nameBytes, 46);
+    centrals.push(central);
+    offset += local.length;
+  }
+  const centralSize = centrals.reduce((n, c) => n + c.length, 0);
+  const end = new Uint8Array(22);
+  const ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, files.length, true);
+  ev.setUint16(10, files.length, true);
+  ev.setUint32(12, centralSize, true);
+  ev.setUint32(16, offset, true);
+  return new Blob([...locals, ...centrals, end]);
+}
+
+/**
+ * The smallest archive the add-on can read the same answer from.
+ *
+ * Returns the original bytes unchanged if anything at all goes wrong —
+ * an unexpected zip, a browser without DecompressionStream, a .vtp. A
+ * slimming step that refuses the upload it was meant to enable would be
+ * worse than the size limit it exists to dodge.
+ */
+async function slimProject(file) {
+  const buffer = await file.arrayBuffer();
+  try {
+    const entries = zipEntries(buffer);
+    const found = [];
+    for (const name of WANTED) {
+      const entry = entries.find((e) => e.name === name);
+      if (entry) found.push([name, await zipRead(buffer, entry)]);
+    }
+    // Without the environment there is no layout, so there is nothing to
+    // gain by sending a smaller file — let the add-on say why.
+    if (!found.some(([name]) => name === WANTED[0])) return { body: buffer };
+    const blob = await zipWrite(found);
+    return { body: await blob.arrayBuffer(), from: file.size, to: blob.size };
+  } catch (err) {
+    return { body: buffer, why: err.message };
+  }
+}
+
 async function importPanel(page) {
   const file = $("p-file").files[0];
   if (!file) { $("p-result").textContent = "choose a file first"; return; }
@@ -913,8 +1095,14 @@ async function importPanel(page) {
       query.set("ipid", $("p-ipid").value.trim() || "3");
       query.set("port", $("p-port").value || "41794");
     }
+    const slim = await slimProject(file);
+    if (slim.to) {
+      $("p-result").textContent =
+        `reading… (${(slim.from / 1e6).toFixed(1)} MB project, `
+        + `sending ${(slim.to / 1e3).toFixed(0)} KB)`;
+    }
     const summary = await call("/api/panel/upload?" + query.toString(),
-      { method: "POST", body: await file.arrayBuffer() });
+      { method: "POST", body: slim.body });
     const card = await call("/api/cards/panel");
     const text = JSON.stringify(card.card, null, 2);
     $("p-out").value = text;
@@ -955,7 +1143,15 @@ async function importPanel(page) {
     bits.push("card copied");
     $("p-result").textContent = bits.join(" · ");
   } catch (err) {
-    $("p-result").textContent = "failed: " + err.message;
+    // The commonest failure by far, and the message on its own does not
+    // say what to do about it.
+    const tooBig = /too large|413|entity too large/i.test(err.message || "");
+    $("p-result").textContent = tooBig
+      ? "failed: the upload was rejected as too large. This browser could "
+        + "not shrink the project first — try Chrome, Edge or Safari 16.4+, "
+        + "or copy the project's swf/Environment.xml and XPanel.ini into a "
+        + "small zip and load that."
+      : "failed: " + err.message;
   } finally {
     button.disabled = false;
   }

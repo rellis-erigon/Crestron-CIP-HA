@@ -3,6 +3,23 @@
 The add-on and the Home Assistant integration are released as a matched
 pair and share a version number. CI fails the build if they drift.
 
+## 0.12.2 — 2026-10-09
+
+- **Fix**: Loading a panel through the add-on's own page failed with
+  "content too large". A compiled project is 18-26 MB, nearly all of it
+  Flash runtime and theme artwork, and Home Assistant's ingress proxy caps
+  a request body well below that — so the upload was rejected before the
+  add-on ever saw it. Raising that cap is not the add-on's to raise.
+
+  The reader opens exactly two files out of the archive, so the page now
+  extracts those in the browser and uploads a small zip holding just them:
+  26 MB becomes 35 KB, and the add-on reads it byte-for-byte identically
+  because it is still a zip with the same two entries. Verified on all
+  four project types to hand (.zip, .vtz, .c3p) — every one produces the
+  same faceplate as the full archive. A .vtp, or anything that cannot be
+  unpacked, is sent whole exactly as before, so nothing that used to work
+  stops working.
+
 ## 0.12.1 — 2026-10-09
 
 - **Feature**: The import screen now says what it found and what it had to
