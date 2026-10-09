@@ -45,6 +45,21 @@ def attach_processor(hub: Any, name: str, host: str, ipid: int,
             f"{existing.host} as IPID 0x{existing.ipid:02X}; rename the panel"
         )
 
+    # The same processor under a second name would be a second CIP
+    # registration to hardware already registered. Two processors on this
+    # site were knocked off the network that way. A name is only a label,
+    # so matching on it alone is not enough — what must not be duplicated
+    # is the host and IPID.
+    for other, connection in hub.connections.items():
+        if connection.host == host and connection.ipid == ipid:
+            raise ApplyError(
+                f"{host} as IPID 0x{ipid:02X} is already connected, under "
+                f"the name {other!r}. Importing it again as {name!r} would "
+                f"open a second registration to the same processor, which "
+                f"can drop it off the network. Name the panel {other!r} to "
+                f"add its joins to the connection that already exists."
+            )
+
     hub.add_processor(name, host, ipid, port)
     hub.start_processor(name)
     return "added"

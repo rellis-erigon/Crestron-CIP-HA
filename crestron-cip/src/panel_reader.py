@@ -89,6 +89,93 @@ GEOMETRY = ("Left", "Top", "Width", "Height", "Z")
 # sizes in one label.
 TEXT_PROPERTIES = ("Label", "TextLabel", "Text")
 
+# Where a control keeps its artwork. An Advanced Button has one of these
+# blocks per state, so the same button carries a different background
+# when it is lit — which is the whole look of a source-select page.
+#
+#   <SelectedModeState>
+#     <IconType><UseCustom><Image><FilePath>images\airmedia.png
+#     <ImageType><UseImage><Image><FilePath>images\BtnOnColour280x280.png
+#
+# `ImageType/UseState` appears instead where the background comes from the
+# theme. That artwork lives compiled inside a SWF and cannot be pulled
+# out, so those controls get their colour and nothing more.
+ICON_PATH = "IconType/UseCustom/Image/FilePath"
+IMAGE_PATH = "ImageType/UseImage/Image/FilePath"
+STATE_ORDER = ("NormalModeState", "SelectedModeState", "PressedModeState")
+
+
+def _colour(raw: str | None) -> str:
+    """A Crestron colour as CSS. `0x0071bc` becomes `#0071bc`."""
+    text = (raw or "").strip().lower()
+    if text.startswith("0x"):
+        text = text[2:]
+    if len(text) == 6 and all(c in "0123456789abcdef" for c in text):
+        return "#" + text
+    return ""
+
+
+def _artwork(node: Any) -> dict[str, str]:
+    """The image files a control draws itself from.
+
+    Paths are written `images\\airmedia.png`, relative to the `swf`
+    directory and with Windows separators, so they are normalised to the
+    name they actually have inside the archive.
+    """
+    def tidy(text: str | None) -> str:
+        if not text or not text.strip():
+            return ""
+        parts = text.strip().replace("\\", "/").split("/")
+        # Repeated and empty separators are dropped: the result is looked
+        # up against the archive's own entry names, where "images//a.png"
+        # matches nothing and fails as a missing image rather than as a
+        # bad path.
+        return "/".join(["swf"] + [p for p in parts if p and p != "."])
+
+    def own(element: Any):
+        """Walk the control's own markup, not that of anything inside it.
+
+        A container holds its children's artwork too, and read whole it
+        would give a border the icon of the button sitting on it.
+        """
+        for child in element:
+            if child.tag == "Children":
+                continue
+            yield child
+            yield from own(child)
+
+    found: dict[str, str] = {}
+    states = {
+        state.tag: state
+        for mode in own(node) if mode.tag == "Mode"
+        for state in mode
+        if state.tag.endswith("ModeState")
+    }
+    for tag in STATE_ORDER:
+        state = states.get(tag)
+        if state is None:
+            continue
+        icon = tidy(state.findtext(ICON_PATH))
+        image = tidy(state.findtext(IMAGE_PATH))
+        if icon and "icon" not in found:
+            found["icon"] = icon
+        if image:
+            # The selected state is what the button looks like when it is
+            # lit, which is the only one a card can show conditionally.
+            key = "image_on" if tag == "SelectedModeState" else "image"
+            found.setdefault(key, image)
+
+    # An Image Object has no states; its picture hangs directly off it.
+    if not found:
+        for element in own(node):
+            if element.tag != "Image":
+                continue
+            path = tidy(element.findtext("FilePath"))
+            if path:
+                found["image"] = path
+                break
+    return found
+
 _TAG_RE = re.compile(r"<[^>]+>")
 # Crestron marks indirect text as <cips>JOIN?placeholder</cips>. The join is
 # the serial join the processor writes the live words to; the placeholder is
@@ -295,6 +382,14 @@ def read_panel(data: bytes) -> dict:
                     else "page",
                     "width": _as_int(own.get("Width")),
                     "height": _as_int(own.get("Height")),
+                    # Most of what a panel looks like is the colour behind
+                    # everything else. Without it a generated card is
+                    # controls floating on the dashboard's own background,
+                    # which is the one thing that stops it reading as the
+                    # same screen.
+                    "background": _colour(own.get("BackgroundColor")),
+                    "opaque": (own.get("DisplayBackgroundColor") or "").strip().lower()
+                    == "true",
                     "order": len(page_meta),
                 })
         if node.tag == "Child":
@@ -330,6 +425,7 @@ def read_panel(data: bytes) -> dict:
                     # are text joins, not the digital/analog ones in `joins`.
                     "text_joins": [i["join"] for i in label["indirect"]],
                     "align": props.get("TextAlignment", ""),
+                    "artwork": _artwork(node),
                     "joins": joins,
                     **geometry,
                 })
@@ -344,6 +440,7 @@ def read_panel(data: bytes) -> dict:
             obj["page"],
             obj["left"], obj["top"], obj["width"], obj["height"],
             obj["control"], obj["label"],
+            tuple(sorted(obj["artwork"].items())),
             tuple(sorted((k, v["join"]) for k, v in obj["joins"].items())),
         )
         if fingerprint in seen:

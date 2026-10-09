@@ -17,11 +17,12 @@ import panel_faceplate as pf  # noqa: E402
 
 def obj(control="Advanced Button", left=10, top=20, width=100, height=50,
         label="", joins=None, text_joins=(), page="Main", style=None,
-        align="", name=""):
+        align="", name="", artwork=None):
     return {
         "page": page, "page_path": page, "name": name, "control": control,
         "label": label, "style": style or {"size": 24, "color": None, "bold": False},
         "text_joins": list(text_joins), "align": align, "joins": joins or {},
+        "artwork": artwork or {},
         "left": left, "top": top, "width": width, "height": height, "z": 1,
     }
 
@@ -422,3 +423,106 @@ def test_a_subpage_drawn_on_its_own_uses_its_own_size_and_origin():
     region = next(r for r in fp["regions"] if r["kind"] == "button")
     # No reference places it, so nothing offsets it.
     assert (region["x"], region["y"]) == (21, 387)
+
+
+# -- artwork and the colour behind it -----------------------------------
+
+def test_a_buttons_artwork_travels_to_the_region():
+    fp = pf.build_faceplate(panel([
+        obj(joins=digital(101), artwork={
+            "icon": "swf/images/airmedia.png",
+            "image_on": "swf/images/BtnOnColour280x280.png",
+        }),
+    ]))
+    region = next(r for r in fp["regions"] if r["kind"] == "button")
+    assert region["icon"] == "swf/images/airmedia.png"
+    assert region["src_on"] == "swf/images/BtnOnColour280x280.png"
+
+
+def test_an_image_object_is_drawn_rather_than_skipped():
+    # An unrecognised control with no label is normally dropped as noise.
+    # A picture is the entire content of an Image Object.
+    fp = pf.build_faceplate(panel([
+        obj(control="Image Object", label="",
+            artwork={"image": "swf/images/logo.png"}),
+    ]))
+    assert len(fp["regions"]) == 1
+    assert fp["regions"][0]["src"] == "swf/images/logo.png"
+    # No invented border around somebody's logo.
+    assert "radius" not in fp["regions"][0]
+
+
+def test_a_screen_that_paints_its_background_gets_a_backdrop():
+    dump = panel(
+        [obj(joins=digital(1))],
+        page_meta=[{"key": "Main", "name": "Main", "kind": "page",
+                    "width": 1280, "height": 800,
+                    "background": "#ffffff", "opaque": True, "order": 0}],
+    )
+    fp = pf.build_faceplate(dump, page="Main")
+    backdrop = fp["regions"][0]
+    assert backdrop["id"] == "backdrop"
+    assert backdrop["fill"] == "#ffffff"
+    assert (backdrop["w"], backdrop["h"]) == (1280, 800)
+
+
+def test_the_backdrop_is_drawn_before_everything_including_bigger_plates():
+    dump = panel(
+        [obj(control="Fill Border", left=0, top=0, width=1280, height=800)],
+        page_meta=[{"key": "Main", "name": "Main", "kind": "page",
+                    "width": 1280, "height": 800,
+                    "background": "#ffffff", "opaque": True, "order": 0}],
+    )
+    fp = pf.build_faceplate(dump, page="Main")
+    assert fp["regions"][0]["id"] == "backdrop"
+
+
+def test_a_glass_subpage_paints_nothing():
+    # Most subpages record a colour and never draw it. Painting it would
+    # hide the page underneath.
+    dump = panel(
+        [obj(page="Sub", joins=digital(1))],
+        page_meta=[MAIN, {"key": "Sub", "name": "Subpage", "kind": "subpage",
+                          "width": 1280, "height": 580, "background": "#0071bc",
+                          "opaque": False, "order": 1}],
+        references=[reference("Body", 0, 120, 1280, 580, None, 0)],
+    )
+    fp = pf.build_faceplate(dump, page="3.0-Main")
+    assert not [r for r in fp["regions"] if r["id"].startswith("backdrop")]
+
+
+def test_an_opaque_popup_paints_where_it_is_placed_and_only_on_its_state():
+    dump = panel(
+        [obj(page="Sub", joins=digital(1))],
+        page_meta=[MAIN, {"key": "Sub", "name": "Subpage", "kind": "subpage",
+                          "width": 1280, "height": 580, "background": "#53514f",
+                          "opaque": True, "order": 1}],
+        references=[reference("3.5-Confirm", 0, 120, 1280, 580, 35, 0)],
+    )
+    fp = pf.build_faceplate(dump, page="3.0-Main")
+    plate = next(r for r in fp["regions"] if r["id"].startswith("backdrop_"))
+    assert (plate["x"], plate["y"]) == (0, 120)
+    assert plate["fill"] == "#53514f"
+    assert plate["page"] == "3.5-Confirm"
+
+
+def test_a_pale_panel_reads_the_other_way_round():
+    # A real panel is usually a pale screen with dark text, the opposite
+    # of the dark instrument faces the hand-drawn faceplates emulate.
+    light = panel([obj(joins=digital(1))], page_meta=[
+        {"key": "Main", "name": "Main", "kind": "page", "width": 800,
+         "height": 480, "background": "#ffffff", "opaque": True, "order": 0}])
+    assert pf.build_faceplate(light, page="Main")["display"] == "positive"
+
+    dark = panel([obj(joins=digital(1))], page_meta=[
+        {"key": "Main", "name": "Main", "kind": "page", "width": 800,
+         "height": 480, "background": "#0071bc", "opaque": True, "order": 0}])
+    assert pf.build_faceplate(dark, page="Main")["display"] == "negative"
+
+
+def test_crestron_blue_is_judged_dark():
+    # A naive channel average calls #0071bc light and puts black text on
+    # it. Luma weights green, which is what the eye does.
+    assert pf._is_light("#0071bc") is False
+    assert pf._is_light("#ffffff") is True
+    assert pf._is_light("") is True

@@ -395,3 +395,136 @@ def test_a_subpage_is_recorded_as_a_subpage_not_a_page():
     meta = panel["page_meta"][0]
     assert meta["kind"] == "subpage"
     assert (meta["width"], meta["height"]) == (409, 580)
+
+
+# -- artwork ------------------------------------------------------------
+
+def art_button(press, icon=None, image_on=None, theme_state="18"):
+    """An Advanced Button with per-state artwork, as VT Pro-e writes it."""
+    def block(tag, icon_path, image_path):
+        return f"""
+          <{tag}>
+            {f'<IconType><UseCustom><Image><FilePath>{icon_path}</FilePath>'
+               '</Image></UseCustom></IconType>' if icon_path else ''}
+            {f'<ImageType><UseImage><Image><FilePath>{image_path}</FilePath>'
+               '</Image></UseImage></ImageType>'
+             if image_path else
+             f'<ImageType><UseState><State>{theme_state}</State></UseState></ImageType>'}
+          </{tag}>"""
+    return f"""
+      <Child>
+        <ControlName>Advanced Button</ControlName>
+        <ObjectName>B{press}</ObjectName>
+        <Properties>
+          <Left>10</Left><Top>10</Top><Width>280</Width><Height>280</Height>
+          <DigitalPressJoin>{press}</DigitalPressJoin>
+          <Modes><Mode>
+            {block("NormalModeState", icon, None)}
+            {block("SelectedModeState", icon, image_on)}
+          </Mode></Modes>
+        </Properties>
+      </Child>"""
+
+
+def test_a_buttons_icon_and_lit_face_are_both_read():
+    data = archive(panel_xml(art_button(
+        101, icon=r"images\airmedia.png",
+        image_on=r"images\BtnOnColour280x280.png")))
+    art = pr.read_panel(data)["objects"][0]["artwork"]
+    assert art["icon"] == "swf/images/airmedia.png"
+    # The selected state is what the button looks like when it is lit,
+    # which is the only change of appearance a card can reproduce.
+    assert art["image_on"] == "swf/images/BtnOnColour280x280.png"
+
+
+def test_a_theme_background_yields_no_file():
+    # Theme artwork is compiled inside a SWF. There is nothing to extract,
+    # and inventing a path would leave the card linking to nothing.
+    data = archive(panel_xml(art_button(101, icon=r"images\hdmi-icon.png")))
+    art = pr.read_panel(data)["objects"][0]["artwork"]
+    assert "image" not in art and "image_on" not in art
+    assert art["icon"] == "swf/images/hdmi-icon.png"
+
+
+def test_a_windows_path_becomes_the_name_inside_the_archive():
+    data = archive(panel_xml(art_button(101, icon=r"images\sub\thing.png")))
+    assert pr.read_panel(data)["objects"][0]["artwork"]["icon"] == \
+        "swf/images/sub/thing.png"
+
+
+def test_a_doubled_separator_does_not_become_a_path_that_matches_nothing():
+    data = archive(panel_xml(art_button(101, icon="images//logo.png")))
+    assert pr.read_panel(data)["objects"][0]["artwork"]["icon"] == \
+        "swf/images/logo.png"
+
+
+def test_an_image_object_carries_its_picture_directly():
+    child = """
+      <Child>
+        <ControlName>Image Object</ControlName>
+        <ObjectName>Logo</ObjectName>
+        <Properties>
+          <Left>0</Left><Top>0</Top><Width>246</Width><Height>119</Height>
+          <Image><FilePath>images\\logo.png</FilePath></Image>
+        </Properties>
+      </Child>"""
+    art = pr.read_panel(archive(panel_xml(child)))["objects"][0]["artwork"]
+    assert art == {"image": "swf/images/logo.png"}
+
+
+def test_a_container_does_not_take_its_childrens_artwork():
+    # Read whole, a border would claim the icon of the button sitting on
+    # it — the same trap the join reader already had to avoid.
+    nested = f"""
+      <Child>
+        <ControlName>Fill Border</ControlName>
+        <ObjectName>Frame</ObjectName>
+        <Properties>
+          <Left>0</Left><Top>0</Top><Width>600</Width><Height>400</Height>
+          <Children>{art_button(101, icon="images/airmedia.png")}</Children>
+        </Properties>
+      </Child>"""
+    objects = pr.read_panel(archive(panel_xml(nested)))["objects"]
+    frame = next(o for o in objects if o["control"] == "Fill Border")
+    button = next(o for o in objects if o["control"] == "Advanced Button")
+    assert frame["artwork"] == {}
+    assert button["artwork"]["icon"] == "swf/images/airmedia.png"
+
+
+def test_two_buttons_differing_only_in_artwork_both_survive():
+    # The dedupe collapses identical controls. Two source keys at the same
+    # place with the same join but different icons are still two keys.
+    a = art_button(101, icon=r"images\airmedia.png")
+    b = art_button(101, icon=r"images\hdmi-icon.png")
+    assert len(pr.read_panel(archive(panel_xml(a + b)))["objects"]) == 2
+
+
+def test_a_page_background_colour_is_read_as_css():
+    xml = """<?xml version="1.0"?>
+<Crestron><Properties><Pages>
+  <Page><ObjectName>Main</ObjectName><Properties>
+    <Width>1280</Width><Height>800</Height>
+    <BackgroundColor>0x0071bc</BackgroundColor>
+    <DisplayBackgroundColor>true</DisplayBackgroundColor>
+    <Children/>
+  </Properties></Page>
+</Pages></Properties></Crestron>"""
+    meta = pr.read_panel(archive(xml, ini="[Startup]\nwidth=1280\nheight=800\n"))["page_meta"][0]
+    assert meta["background"] == "#0071bc"
+    assert meta["opaque"] is True
+
+
+def test_a_subpage_that_does_not_draw_its_colour_is_not_opaque():
+    # Most subpages record a colour and never paint it — they are glass
+    # over the page behind. Painting it would hide the page.
+    xml = """<?xml version="1.0"?>
+<Crestron><Properties><Pages>
+  <Page><ControlName>Subpage</ControlName><ObjectName>Subpage</ObjectName>
+    <Properties><Width>400</Width><Height>300</Height>
+      <BackgroundColor>0x0071bc</BackgroundColor>
+      <DisplayBackgroundColor>false</DisplayBackgroundColor>
+      <Children/></Properties>
+  </Page>
+</Pages></Properties></Crestron>"""
+    meta = pr.read_panel(archive(xml, ini="[Startup]\nwidth=1280\nheight=800\n"))["page_meta"][0]
+    assert meta["opaque"] is False

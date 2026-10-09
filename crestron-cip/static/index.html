@@ -916,7 +916,13 @@ function describeNotes(summary) {
 // same two entries in it. No server change, and the .vtp path is
 // untouched.
 
+// The project file and the panel size, plus the artwork. A panel draws
+// itself from the images under swf/images — button faces, source icons,
+// the logo — and without them the card is grey boxes where the controls
+// should be. They total well under a megabyte; the 25 MB being left
+// behind is the Flash runtime and the theme.
 const WANTED = ["swf/Environment.xml", "XPanel.ini"];
+const WANTED_PREFIX = "swf/images/";
 
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -1070,13 +1076,17 @@ async function slimProject(file) {
   try {
     const entries = zipEntries(buffer);
     const found = [];
-    for (const name of WANTED) {
-      const entry = entries.find((e) => e.name === name);
-      if (entry) found.push([name, await zipRead(buffer, entry)]);
+    for (const entry of entries) {
+      const keep = WANTED.includes(entry.name)
+        || (entry.name.startsWith(WANTED_PREFIX) && !entry.name.endsWith("/"));
+      if (keep) found.push([entry.name, await zipRead(buffer, entry)]);
     }
     // Without the environment there is no layout, so there is nothing to
     // gain by sending a smaller file — let the add-on say why.
     if (!found.some(([name]) => name === WANTED[0])) return { body: buffer };
+    // Order the project file first so a reader that streams does not have
+    // to hold the images to reach it.
+    found.sort((a, b) => (a[0] === WANTED[0] ? -1 : b[0] === WANTED[0] ? 1 : 0));
     const blob = await zipWrite(found);
     return { body: await blob.arrayBuffer(), from: file.size, to: blob.size };
   } catch (err) {

@@ -3,6 +3,45 @@
 The add-on and the Home Assistant integration are released as a matched
 pair and share a version number. CI fails the build if they drift.
 
+## 0.13.0 — 2026-10-09
+
+- **Feature**: An imported panel now draws its own artwork. The layout
+  was right but the card looked nothing like the panel, because what
+  makes a source key recognisable is a picture and the picture was still
+  in the archive. Artwork is per state — the icon a control carries, and
+  the face behind it when it is lit — so a source key shows which source
+  is playing. Where the face comes from the theme rather than a file
+  there is nothing to extract: that artwork is compiled inside a SWF, and
+  those keys get a neutral stand-in rather than a link to nothing.
+
+  Images are written to `/config/www/crestron-panels/<panel>/` and the
+  card fetches them from `/local`. The add-on's own HTTP server sits
+  behind an ingress token a dashboard card cannot construct, and inlining
+  them would have put a megabyte of base64 into every card's config.
+
+- **Feature**: Pages and subpages carry a background colour and a flag
+  saying whether they paint it — most record Crestron blue and never draw
+  it, being glass over the page underneath. The ones that do are drawn,
+  which is most of what a panel looks like, and the screen's own backdrop
+  decides whether the card reads as a pale panel or a dark one.
+
+- **Fix**: An IPID of `03` was rejected. Crestron writes IPIDs in hex
+  padded to two digits, which is what is printed on the processor and
+  what the field's own placeholder showed, and `int(x, 0)` refuses a
+  leading zero. The assignment failed with "invalid literal for int()
+  with base 0: '03'" and nothing was applied. IPIDs are now read as hex,
+  which is also the right default: an IPID written 10 is sixteen.
+
+- **Fix**: An address with a mistyped octet — `1982.168.33.2` — is
+  refused with the reason, instead of becoming a connection that fails
+  later where nobody sees it.
+
+- **Fix**: Importing a panel whose name differs from an existing
+  connection would open a **second CIP registration to the same
+  processor**, which can drop it off the network. The guard matched on
+  the name alone, and a name is only a label; it now refuses when the
+  host and IPID are already connected and says which name to use.
+
 ## 0.12.3 — 2026-10-09
 
 - **Fix**: Four features on the add-on's page had never worked: panel

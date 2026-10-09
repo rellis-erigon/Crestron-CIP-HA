@@ -139,6 +139,7 @@ def region_for(obj: dict[str, Any], index: int) -> dict[str, Any] | None:
     label = _label_of(obj)
     text_joins = obj.get("text_joins") or []
 
+    art = obj.get("artwork") or {}
     base: dict[str, Any] = {
         "id": f"r{index}",
         "kind": kind or "plate",
@@ -148,6 +149,15 @@ def region_for(obj: dict[str, Any], index: int) -> dict[str, Any] | None:
         "h": height,
         "role": "",
     }
+    # Artwork the panel draws itself from. `src_on` is the selected state:
+    # what the control looks like when it is lit, which is the one change
+    # of appearance a card can honestly reproduce.
+    if art.get("image"):
+        base["src"] = art["image"]
+    if art.get("image_on"):
+        base["src_on"] = art["image_on"]
+    if art.get("icon"):
+        base["icon"] = art["icon"]
     if obj.get("page"):
         base["page"] = obj["page"]
 
@@ -204,11 +214,30 @@ def region_for(obj: dict[str, Any], index: int) -> dict[str, Any] | None:
     base["text"] = label
     base["radius"] = 4
     base.update(_style_of(obj))
+    if base.get("src") or base.get("icon"):
+        # A picture is the whole point of an Image Object. Drawing a box
+        # around it would be a second, invented border.
+        base.pop("radius", None)
+        return base
     if control in CHROME_CONTROLS:
         base["border"] = "currentColor"
     elif not label:
         return None
     return base
+
+
+def _is_light(colour: str) -> bool:
+    """Whether text on this background should be dark.
+
+    Rec. 601 luma, which is the cheap approximation that matches how the
+    eye weights the channels — Crestron blue (#0071bc) is darker than its
+    green channel alone suggests, and a naive average calls it light.
+    """
+    text = (colour or "").lstrip("#")
+    if len(text) != 6:
+        return True  # No backdrop drawn: the card's own surface shows through.
+    r, g, b = (int(text[i:i + 2], 16) for i in (0, 2, 4))
+    return (0.299 * r + 0.587 * g + 0.114 * b) > 140
 
 
 def _area(region: dict[str, Any]) -> int:
@@ -233,7 +262,53 @@ def build_faceplate(
     }
     width, height = screen["size"] or (None, None)
 
+    meta_by_key = {m["key"]: m for m in panel.get("page_meta", [])}
     regions: list[dict[str, Any]] = []
+
+    # The screen's own backdrop, before anything stands on it. A panel is
+    # mostly the colour behind its controls, and without this the card is
+    # controls floating on whatever the dashboard theme happens to be —
+    # which is the single thing that stops it reading as the same screen.
+    screen_meta = meta_by_key.get(page or "")
+    if screen_meta and screen_meta.get("background") and screen_meta.get("opaque"):
+        regions.append({
+            "id": "backdrop",
+            "kind": "plate",
+            "role": "",
+            "x": 0, "y": 0,
+            "w": screen["size"][0] or 0,
+            "h": screen["size"][1] or 0,
+            "fill": screen_meta["background"],
+        })
+
+    # Each subpage that paints its own background, where its reference
+    # places it. A subpage with DisplayBackgroundColor false is a sheet of
+    # glass: it has a colour recorded but does not draw it.
+    for ref in sorted(
+        (r for r in panel.get("references", []) if r["page"] == page),
+        key=lambda r: r["order"],
+    ):
+        target = resolve_references(panel)["resolved"].get(
+            f"{page}\u0000{ref['order']}")
+        sub = meta_by_key.get(target or "")
+        if not sub or not sub.get("opaque") or not sub.get("background"):
+            continue
+        state = ref["name"] if ref["join"] else None
+        plate = {
+            "id": f"backdrop_{ref['order']}",
+            "kind": "plate",
+            "role": "",
+            "x": ref["left"] or 0,
+            "y": ref["top"] or 0,
+            "w": ref["width"] or 0,
+            "h": ref["height"] or 0,
+            "fill": sub["background"],
+        }
+        if state:
+            plate["page"] = state
+            plate["group"] = state
+        regions.append(plate)
+
     for index, obj in enumerate(screen["objects"]):
         region = region_for(obj, index)
         if region is None:
@@ -253,17 +328,30 @@ def build_faceplate(
     # Plates first, largest first within them: a region paints over
     # whatever is already in the list, so background has to go down before
     # foreground or the panel's own fills hide its values.
-    regions.sort(key=lambda r: (r["kind"] != "plate", -_area(r)))
+    regions.sort(key=lambda r: (
+        # The screen's backdrop is always first, whatever its size.
+        r["id"] != "backdrop",
+        r["kind"] != "plate",
+        -_area(r),
+    ))
 
     if not width or not height:
         width = max((r["x"] + (r["w"] or 0) for r in regions), default=1280)
         height = max((r["y"] + (r["h"] or 0) for r in regions), default=800)
 
+    # Which way round the panel reads. A real panel is usually a pale
+    # screen with dark text, the opposite of the dark instrument faces the
+    # hand-drawn faceplates emulate. Getting this wrong renders the values
+    # the same colour as the panel they sit on.
+    backdrop = next(
+        (r.get("fill", "") for r in regions if r["id"] == "backdrop"), "",
+    )
     faceplate: dict[str, Any] = {
         "id": re.sub(r"[^a-z0-9]+", "-", (name or "panel").lower()).strip("-"),
         "name": name or "Imported panel",
         "card": "crestron-panel-card",
         "render": "svg",
+        "display": "positive" if _is_light(backdrop) else "negative",
         "size": [width, height],
         "regions": regions,
         "description": (

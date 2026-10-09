@@ -13,10 +13,12 @@ way to map a system is to press a button and watch which join moves.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import time
-from pathlib import Path
+import zipfile
+from pathlib import Path, PurePosixPath
 
 from aiohttp import web
 
@@ -523,6 +525,127 @@ async def mixer_card_endpoint(request: web.Request) -> web.Response:
 
 PANEL_FILE = Path("/config/crestron-cip/panel.json")
 
+# Where a panel's own artwork is put so a card can fetch it.
+#
+# Home Assistant serves /config/www at /local, which is a plain URL any
+# dashboard can use. The alternatives were worse: the add-on's own HTTP
+# server is behind an ingress token a card cannot construct, and inlining
+# the images as data URIs would put a megabyte of base64 into the
+# dashboard config for every card.
+PANEL_IMAGE_DIR = Path("/config/www/crestron-panels")
+PANEL_IMAGE_URL = "/local/crestron-panels"
+ART_KEYS = ("src", "src_on", "icon")
+
+
+def _safe_name(path: str) -> str:
+    """A filename safe to write and to put in a URL.
+
+    Only the base name is kept: a zip entry can say `../../something` and
+    the archive is not ours. Spaces become underscores because the result
+    goes into an href, and "Cover Photo.png" would otherwise need encoding
+    at every point it is used.
+    """
+    base = PurePosixPath(path).name
+    keep = [c if (c.isalnum() or c in "._-") else "_" for c in base]
+    return "".join(keep).lstrip(".") or "image"
+
+
+def export_artwork(archive: bytes, faceplate: dict, panel: str) -> dict:
+    """Write out the images a faceplate refers to, and point it at them.
+
+    The faceplate comes back referring to URLs instead of archive paths.
+    A missing or unreadable image drops the reference rather than leaving
+    a link to nothing: a control that draws its colour and its label is a
+    smaller loss than one that renders as a browser's broken-image icon.
+    """
+    wanted: set[str] = set()
+    for region in faceplate.get("regions", []):
+        for key in ART_KEYS:
+            if region.get(key):
+                wanted.add(region[key])
+    if not wanted:
+        return {"written": 0, "missing": []}
+
+    folder = _safe_name(panel) or "panel"
+    target = PANEL_IMAGE_DIR / folder
+    written: dict[str, str] = {}
+    missing: list[str] = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+            inside = set(zf.namelist())
+            target.mkdir(parents=True, exist_ok=True)
+            for path in sorted(wanted):
+                if path not in inside:
+                    missing.append(path)
+                    continue
+                name = _safe_name(path)
+                (target / name).write_bytes(zf.read(path))
+                written[path] = f"{PANEL_IMAGE_URL}/{folder}/{name}"
+    except (zipfile.BadZipFile, OSError) as err:
+        logger.warning("Could not write panel artwork: %s", err)
+        missing = sorted(wanted)
+        written = {}
+
+    for region in faceplate.get("regions", []):
+        for key in ART_KEYS:
+            path = region.get(key)
+            if not path:
+                continue
+            if path in written:
+                region[key] = written[path]
+            else:
+                region.pop(key)
+    return {"written": len(written), "missing": missing}
+
+
+def parse_ipid(raw: str) -> int:
+    """An IPID as somebody actually types it.
+
+    Crestron writes IPIDs in hex and pads them to two digits — 03, 0A, 1F
+    — and that is what is printed on the processor and in Toolbox, so it
+    is what gets typed. `int(x, 0)` rejects "03" outright, because a
+    leading zero means nothing to it, and the ValueError that came back
+    read "invalid literal for int() with base 0: '03'". That was the real
+    reason an assignment silently did nothing, with the field's own
+    placeholder showing `03`.
+
+    Hex is the right default: an IPID written 10 is sixteen, not ten.
+    """
+    text = str(raw).strip().lower()
+    if not text:
+        raise ValueError("no IPID given")
+    if text.startswith("0x"):
+        text = text[2:]
+    if not text or not all(c in "0123456789abcdef" for c in text):
+        raise ValueError(f"{raw!r} is not an IPID; expected something like 03 or 1F")
+    value = int(text, 16)
+    # CIP carries the IPID in one byte, and 0 is not a device.
+    if not 1 <= value <= 0xFF:
+        raise ValueError(f"IPID {raw!r} is outside 01-FF")
+    return value
+
+
+def check_host(host: str) -> None:
+    """Refuse an address that cannot be what was meant.
+
+    A mistyped octet — `1982.168.33.2` for `192.168.33.2` — otherwise
+    becomes a connection attempt that fails later, somewhere the person
+    who typed it will not see it.
+    """
+    text = host.strip()
+    if not text:
+        raise ValueError("no address given")
+    # Only judge things shaped like dotted quads. A hostname is the
+    # processor's business, not this function's.
+    parts = text.split(".")
+    if len(parts) == 4 and all(p.isdigit() for p in parts):
+        for part in parts:
+            if int(part) > 255:
+                raise ValueError(
+                    f"{host!r} is not a valid address: {part} is above 255 "
+                    f"— check for a mistyped digit"
+                )
+
 
 async def upload_panel(request: web.Request) -> web.Response:
     """Read a .c3p or .vtz and keep the faceplate it describes.
@@ -572,6 +695,11 @@ async def upload_panel(request: web.Request) -> web.Response:
         "ipid": request.query.get("ipid", ""),
         "port": int(request.query.get("port") or DEFAULT_PORT),
     }
+    # Pull the panel's own artwork out of the archive and point the
+    # faceplate at it. Done before the faceplate is stored, so what is
+    # saved is what a card can actually fetch.
+    art = export_artwork(body, faceplate, name)
+
     PANEL_FILE.parent.mkdir(parents=True, exist_ok=True)
     PANEL_FILE.write_text(json.dumps(
         {"name": name, "faceplate": faceplate, "processor": assignment}, indent=1))
@@ -585,6 +713,7 @@ async def upload_panel(request: web.Request) -> web.Response:
         "kinds": summary["kinds"],
         "joins": summary["bindable"],
         "pages": faceplate.get("pages", []),
+        "artwork": art,
     }
     if panel is not None:
         # Which screens there were to choose from, so the import page can
@@ -606,8 +735,9 @@ async def upload_panel(request: web.Request) -> web.Response:
     if assignment["host"] and assignment["ipid"]:
         hub: Hub = request.app["hub"]
         try:
-            ipid = int(str(assignment["ipid"]), 0)
+            ipid = parse_ipid(assignment["ipid"])
             port = int(assignment["port"])
+            check_host(assignment["host"])
             change = attach_processor(hub, name, assignment["host"], ipid, port)
             counts = apply_panel(hub.store, name, faceplate)
         except (ApplyError, ValueError) as err:
