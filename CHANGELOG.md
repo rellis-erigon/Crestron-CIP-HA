@@ -3,6 +3,23 @@
 The add-on and the Home Assistant integration are released as a matched
 pair and share a version number. CI fails the build if they drift.
 
+## 0.12.3 — 2026-10-09
+
+- **Fix**: Four features on the add-on's page had never worked: panel
+  import, the mixer card builder, bulk configure and autogroup. The
+  request helper prepends `api/` to the path, and those four call sites
+  also wrote it themselves, producing `.../api//api/panel/upload`. That
+  matches no route, so the request fell through to the catch-all GET that
+  serves the page and came back **405 Method Not Allowed** — naming
+  neither the path nor the feature.
+
+  The helper now strips a stray prefix, the call sites are spelled one
+  way, and `tests/test_ui_routes.py` reads the page and the server and
+  insists every request the page makes reaches a route that exists for
+  that method. Nothing failed at build time before and no test touched
+  it; the only way to find it was to click the button and know what 405
+  meant.
+
 ## 0.12.2 — 2026-10-09
 
 - **Fix**: Loading a panel through the add-on's own page failed with

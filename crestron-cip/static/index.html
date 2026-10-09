@@ -237,7 +237,13 @@ tr.fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 // Ingress serves this page under a token path, so every request is relative
 // to wherever the page itself was loaded from.
 const BASE = location.pathname.replace(/\/+$/, "") + "/";
-const api = (path) => BASE + "api/" + path;
+// A leading "api/" or "/api/" on the path is tolerated and stripped. Half
+// the call sites wrote it and half did not, and the ones that did produced
+// ".../api//api/panel/upload", which matches no route — so the request fell
+// through to the catch-all GET and came back "405 Method Not Allowed" with
+// nothing to say which path it had actually asked for. Panel import, the
+// mixer card builder, bulk configure and autogroup were all dead this way.
+const api = (path) => BASE + "api/" + String(path).replace(/^\/*(api\/+)?/, "");
 
 const SIGNAL_NAME = { d: "digital", a: "analog", s: "serial" };
 // Mirrors DEFAULT_KIND in the add-on, so a join that arrives over the
@@ -552,7 +558,7 @@ async function bulk(changes) {
   if (!byProcessor.size) return;
   let changed = 0;
   for (const [processor, keys] of byProcessor) {
-    const result = await call("/api/joins/bulk", {
+    const result = await call("joins/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ processor, keys, ...changes }),
@@ -742,7 +748,7 @@ $("autogroup").addEventListener("click", async () => {
   const button = $("autogroup");
   button.disabled = true;
   try {
-    const result = await call("/api/joins/autogroup", {
+    const result = await call("joins/autogroup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ processor }),
@@ -775,7 +781,7 @@ const ROLE_DEFAULTS = {
 async function buildRoleRows() {
   const body = $("rolerows");
   if (body.childElementCount) return;
-  const { roles } = await call("/api/cards/mixer/roles");
+  const { roles } = await call("cards/mixer/roles");
   for (const role of roles) {
     const preset = ROLE_DEFAULTS[role] || { on: false, signal: "a", offset: 0 };
     const tr = document.createElement("tr");
@@ -831,7 +837,7 @@ $("m-build").addEventListener("click", async () => {
       per_row: $("m-perrow").value || "8",
       title: $("m-title").value || "",
     });
-    const result = await call("/api/cards/mixer?" + query.toString());
+    const result = await call("cards/mixer?" + query.toString());
     const text = JSON.stringify(result.card, null, 2);
     const out = $("m-out");
     out.value = text;
@@ -1101,9 +1107,9 @@ async function importPanel(page) {
         `reading… (${(slim.from / 1e6).toFixed(1)} MB project, `
         + `sending ${(slim.to / 1e3).toFixed(0)} KB)`;
     }
-    const summary = await call("/api/panel/upload?" + query.toString(),
+    const summary = await call("panel/upload?" + query.toString(),
       { method: "POST", body: slim.body });
-    const card = await call("/api/cards/panel");
+    const card = await call("cards/panel");
     const text = JSON.stringify(card.card, null, 2);
     $("p-out").value = text;
     $("p-out").hidden = false;
