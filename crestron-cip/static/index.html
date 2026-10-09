@@ -141,8 +141,10 @@ tr.fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   <h3>Load XPanel</h3>
   <p class="muted">
     A compiled panel project — <code>.c3p</code> or <code>.vtz</code>. The
-    objects, their positions and their joins become a card. A
-    <code>.vtp</code> source project cannot be read; compile it first.
+    card is drawn from the panel's own layout: every control where the
+    panel puts it, the words it shows, and the join behind it. A
+    <code>.vtp</code> source project carries joins but no usable layout;
+    compile it for a card that looks like the screen.
     Give it a processor and the rest is automatic: the processor is added,
     its joins created, named, exposed and grouped into one device. Leave
     the address blank to import the layout only.
@@ -160,6 +162,16 @@ tr.fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
     <span class="spacer"></span>
     <span class="muted" id="p-result"></span>
   </div>
+  <div class="row" id="p-screens-row" hidden>
+    <label>Screen
+      <select id="p-screen"></select>
+    </label>
+    <span class="muted">
+      A panel has several screens. This is the one with the most controls on
+      it; pick another to draw that one instead.
+    </span>
+  </div>
+  <p class="muted" id="p-notes" hidden></p>
   <textarea id="p-out" rows="10" hidden readonly></textarea>
 </div>
 
@@ -850,7 +862,41 @@ $("panel").addEventListener("click", () => {
 });
 $("p-close").addEventListener("click", () => { $("panelpanel").hidden = true; });
 
-$("p-load").addEventListener("click", async () => {
+// What the reader had to work out for itself, said plainly. An import
+// that guessed is still worth having; an import that guessed silently is
+// not, because the one thing nobody can check later is what was assumed.
+function describeNotes(summary) {
+  const notes = summary.notes || {};
+  const lines = [];
+  if (summary.pages?.length) {
+    lines.push(`This screen has ${summary.pages.length} states: `
+      + summary.pages.join(", ") + ". The card shows one at a time.");
+  }
+  if (notes.ambiguous_references?.length) {
+    lines.push("Matched by position because the project file does not say "
+      + "which subpage these place: "
+      + notes.ambiguous_references.join(", ")
+      + ". Check them against the panel.");
+  }
+  if (notes.unplaced_subpages?.length) {
+    lines.push("Nothing in the project places "
+      + notes.unplaced_subpages.join(", ")
+      + " — a reference list builds those one per zone while it runs. "
+      + "They are offered as screens of their own.");
+  }
+  if (summary.zones?.length) {
+    lines.push(`${summary.zones.length} repeating group(s) of joins found — `
+      + "the same controls once per zone.");
+  }
+  if (summary.source === "joins-only") {
+    lines.push("This project has joins but no readable layout, so the card "
+      + "is a list of controls rather than the panel's screen. Compile the "
+      + "project to a .c3p or .vtz for the layout.");
+  }
+  return lines;
+}
+
+async function importPanel(page) {
   const file = $("p-file").files[0];
   if (!file) { $("p-result").textContent = "choose a file first"; return; }
   const button = $("p-load");
@@ -861,6 +907,7 @@ $("p-load").addEventListener("click", async () => {
     // Sent as raw bytes: a panel project is tens of megabytes and
     // base64 in JSON would be a third larger again for no reason.
     const query = new URLSearchParams({ name });
+    if (page) query.set("page", page);
     if ($("p-host").value.trim()) {
       query.set("host", $("p-host").value.trim());
       query.set("ipid", $("p-ipid").value.trim() || "3");
@@ -873,8 +920,32 @@ $("p-load").addEventListener("click", async () => {
     $("p-out").value = text;
     $("p-out").hidden = false;
     await navigator.clipboard?.writeText(text).catch(() => {});
+
+    // Offer the panel's other screens. Re-importing with one re-reads the
+    // file already in the picker, so nothing has to be chosen twice.
+    const select = $("p-screen");
+    if (summary.screens?.length > 1) {
+      select.innerHTML = "";
+      for (const screen of summary.screens) {
+        const option = document.createElement("option");
+        option.value = screen;
+        option.textContent = screen;
+        option.selected = screen === summary.chosen_screen;
+        select.appendChild(option);
+      }
+      $("p-screens-row").hidden = false;
+    } else {
+      $("p-screens-row").hidden = true;
+    }
+
+    const lines = describeNotes(summary);
+    $("p-notes").textContent = lines.join(" ");
+    $("p-notes").hidden = lines.length === 0;
+
     const bits = [`${summary.regions} controls`,
                   `${summary.size[0]}x${summary.size[1]}`];
+    if (summary.chosen_screen) bits.push(summary.chosen_screen);
+    if (summary.joins?.length) bits.push(`${summary.joins.length} joins`);
     if (summary.assign_error) {
       bits.push("not assigned: " + summary.assign_error);
     } else if (summary.processor) {
@@ -888,6 +959,11 @@ $("p-load").addEventListener("click", async () => {
   } finally {
     button.disabled = false;
   }
+}
+
+$("p-load").addEventListener("click", () => void importPanel());
+$("p-screen").addEventListener("change", (event) => {
+  void importPanel(event.target.value);
 });
 
 $("learn").addEventListener("click", () => {

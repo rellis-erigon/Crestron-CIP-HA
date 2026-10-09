@@ -3,6 +3,18 @@
 The add-on and the Home Assistant integration are released as a matched
 pair and share a version number. CI fails the build if they drift.
 
+## 0.12.1 — 2026-10-09
+
+- **Feature**: The import screen now says what it found and what it had to
+  work out. A panel has several screens; it shows which one it drew, with
+  the others offered in a picker that re-reads the file already chosen. It
+  names the states that screen has, the subpages it matched by position
+  because the project file does not say which reference places them, and
+  any subpage nothing places — a reference list builds those one per zone
+  while the program runs. An import that guessed is worth having; one that
+  guessed silently is not, because what was assumed is the one thing
+  nobody can check afterwards.
+
 ## 0.12.0 — 2026-10-09
 
 - **Feature**: An imported panel now produces a card that looks like the
