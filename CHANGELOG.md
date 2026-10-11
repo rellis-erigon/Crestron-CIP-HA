@@ -3,6 +3,41 @@
 The add-on and the Home Assistant integration are released as a matched
 pair and share a version number. CI fails the build if they drift.
 
+## 0.14.0 — 2026-10-12
+
+- **Feature**: Load the processor's control program and a panel binds
+  itself. Two files, both out of Toolbox, and no entity ids typed by
+  anybody.
+
+  The panel project draws the screen but cannot say what anything is
+  connected to: a join number means nothing, and an analog join is
+  usually feedback, so a fader bound to one cannot be moved. The program
+  closes that gap. Its device table maps each IP-ID to the comment its
+  programmer wrote — the only human name a panel has anywhere — and
+  where audio is on a DSP driven by named control, those control names
+  survive compilation. The add-on asks Home Assistant what entities
+  exist and matches them by name, so a fader ends up on the gain it
+  really moves, in dB, settable, with its up, down and mute keys wired.
+
+  Which strip is which is the one thing nothing records, so strips are
+  matched by what their label says they are — a microphone or a source —
+  preferring the panel's own room. A joined room shares one source and
+  keeps a microphone each, which is why the spare strip is the other
+  room's mic and not its source. Every match carries its reasoning and
+  the import screen shows it, because a mute button on the wrong room
+  looks exactly like one on the right room.
+
+- **Security**: A program archive usually contains a login in clear
+  text. Only the parsed result is stored, never the archive, and a
+  connection module's parameters are counted rather than read — they are
+  kept out of the labels, the modules and the stored file, and the
+  import screen says one was found. There is a test that fails if a
+  password reaches any output.
+
+- **Note**: A panel's IP-ID is shown in hex, as Crestron writes it
+  everywhere a person sees one. The device table lists IP-ID 11 for what
+  is decimal 17, and showing the decimal invites a wrong entry.
+
 ## 0.13.2 — 2026-10-09
 
 - **Change**: A generated level bar now takes its scale from whatever it

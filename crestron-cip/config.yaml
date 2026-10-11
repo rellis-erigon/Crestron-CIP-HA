@@ -1,6 +1,6 @@
 name: "Crestron CIP Bridge"
 description: "Discover Crestron touchpanel joins over CIP and expose them to Home Assistant"
-version: "0.13.2"
+version: "0.14.0"
 slug: crestron-cip
 url: "https://github.com/rellis-erigon/Crestron-CIP-HA"
 init: false
@@ -16,6 +16,9 @@ arch:
 # assigned to, rather than asking someone to type it twice.
 hassio_api: true
 hassio_role: manager
+# Needed so an import can bind a panel's controls to the entities that
+# already exist, instead of asking somebody to find and type each id.
+homeassistant_api: true
 map:
   - config:rw
 options:

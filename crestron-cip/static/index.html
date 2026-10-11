@@ -97,6 +97,34 @@ tr.fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   table.roles td:first-child { width:28px; }
   #m-out { width:100%; margin-top:10px; font-family:ui-monospace,monospace;
            font-size:12px; }
+/* What an import wired up, and on what evidence. Shown because a
+   binding is the one part of an import nobody can verify later: a mute
+   button on the wrong room looks exactly like one on the right room. */
+table.binding {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0 4px;
+  font-size: 13px;
+}
+table.binding th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  padding: 4px 8px 4px 0;
+}
+table.binding td {
+  padding: 4px 8px 4px 0;
+  border-bottom: 1px solid var(--line);
+  font-family: ui-monospace, Menlo, monospace;
+}
+table.binding td:last-child {
+  font-family: inherit;
+  color: var(--muted);
+}
+table.binding tr.unbound td {
+  opacity: 0.55;
+}
 </style>
 </head>
 <body>
@@ -140,17 +168,43 @@ tr.fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 <div class="panel" id="panelpanel" hidden>
   <h3>Load XPanel</h3>
   <p class="muted">
-    A compiled panel project — <code>.c3p</code> or <code>.vtz</code>. The
-    card is drawn from the panel's own layout: every control where the
-    panel puts it, the words it shows, and the join behind it. A
-    <code>.vtp</code> source project carries joins but no usable layout;
-    compile it for a card that looks like the screen.
-    Give it a processor and the rest is automatic: the processor is added,
-    its joins created, named, exposed and grouped into one device. Leave
-    the address blank to import the layout only.
+    Two files, both of which come out of Crestron Toolbox, and the card
+    builds itself.
+  </p>
+  <p class="muted">
+    <strong>The control program</strong> — the archive Toolbox saves when
+    you upload or retrieve a program. It names the rooms, says which
+    IP-ID each panel is, and names the controls behind the faders. None
+    of that is in the panel project, and without it a card is a drawing.
+    Only what is read out is kept: a program archive usually holds a
+    password in clear and that is not stored.
+  </p>
+  <p class="muted">
+    <strong>The panel project</strong> — a compiled <code>.c3p</code> or
+    <code>.vtz</code>. The card is drawn from it: every control where the
+    panel puts it, the words it shows, the artwork it draws, and the join
+    behind it. A <code>.vtp</code> source project carries joins but no
+    usable layout; compile it for a card that looks like the screen.
+  </p>
+  <p class="muted">
+    Give it a processor and the joins are created, named, exposed and
+    grouped too. Leave the address blank to import the layout only.
   </p>
   <div class="row">
-    <input type="file" id="p-file" accept=".c3p,.vtz,.zip">
+    <label>1. Control program
+      <input type="file" id="g-file" accept=".zip,.lpz,.spz,.bin">
+    </label>
+    <button id="g-load">Load program</button>
+    <span class="muted" id="g-result"></span>
+  </div>
+  <p class="muted" id="g-detail" hidden></p>
+  <div class="row">
+    <label>2. Panel project
+      <input type="file" id="p-file" accept=".c3p,.vtz,.zip">
+    </label>
+    <label>Which panel
+      <select id="p-panel"><option value="">(load a program first)</option></select>
+    </label>
     <label>Name <input id="p-name" placeholder="Panel"></label>
   </div>
   <div class="row">
@@ -172,6 +226,11 @@ tr.fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
     </span>
   </div>
   <p class="muted" id="p-notes" hidden></p>
+  <table class="binding" id="p-bindings" hidden>
+    <thead><tr><th>Strip</th><th>Control</th><th>Level</th><th>Mute</th>
+      <th>Matched because</th></tr></thead>
+    <tbody></tbody>
+  </table>
   <textarea id="p-out" rows="10" hidden readonly></textarea>
 </div>
 
@@ -894,6 +953,12 @@ function describeNotes(summary) {
     lines.push(`${summary.zones.length} repeating group(s) of joins found — `
       + "the same controls once per zone.");
   }
+  if (!summary.has_program) {
+    lines.push("No control program loaded, so the faders and mutes are "
+      + "not bound to anything. Load one above and the card wires itself.");
+  } else if (summary.room?.name) {
+    lines.push(`The program calls this panel "${summary.room.name}".`);
+  }
   if (summary.source === "joins-only") {
     lines.push("This project has joins but no readable layout, so the card "
       + "is a list of controls rather than the panel's screen. Compile the "
@@ -1106,6 +1171,7 @@ async function importPanel(page) {
     // base64 in JSON would be a third larger again for no reason.
     const query = new URLSearchParams({ name });
     if (page) query.set("page", page);
+    if ($("p-panel").value) query.set("panel_ipid", $("p-panel").value);
     if ($("p-host").value.trim()) {
       query.set("host", $("p-host").value.trim());
       query.set("ipid", $("p-ipid").value.trim() || "3");
@@ -1142,6 +1208,7 @@ async function importPanel(page) {
       $("p-screens-row").hidden = true;
     }
 
+    showBindings(summary.strips);
     const lines = describeNotes(summary);
     $("p-notes").textContent = lines.join(" ");
     $("p-notes").hidden = lines.length === 0;
@@ -1149,6 +1216,7 @@ async function importPanel(page) {
     const bits = [`${summary.regions} controls`,
                   `${summary.size[0]}x${summary.size[1]}`];
     if (summary.chosen_screen) bits.push(summary.chosen_screen);
+    if (summary.bound) bits.push(`${summary.bound} control(s) bound`);
     if (summary.joins?.length) bits.push(`${summary.joins.length} joins`);
     if (summary.assign_error) {
       bits.push("not assigned: " + summary.assign_error);
@@ -1173,6 +1241,86 @@ async function importPanel(page) {
   }
 }
 
+// --- The control program -----------------------------------------------
+
+/** Offer the panels the program knows about, so nobody types an IP-ID. */
+function showPanels(panels) {
+  const select = $("p-panel");
+  select.innerHTML = "";
+  if (!panels?.length) {
+    select.innerHTML = '<option value="">(none found)</option>';
+    return;
+  }
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = "(choose)";
+  select.appendChild(blank);
+  for (const panel of panels) {
+    const option = document.createElement("option");
+    option.value = panel.ipid;
+    option.textContent = `IP-ID ${panel.ipid_hex} — ${panel.comment || panel.model}`;
+    select.appendChild(option);
+  }
+  if (panels.length === 1) select.value = panels[0].ipid;
+}
+
+async function loadProgram() {
+  const file = $("g-file").files[0];
+  if (!file) { $("g-result").textContent = "choose a file first"; return; }
+  const button = $("g-load");
+  button.disabled = true;
+  $("g-result").textContent = "reading…";
+  try {
+    const summary = await call("program/upload",
+      { method: "POST", body: await file.arrayBuffer() });
+    showPanels(summary.panels);
+    const bits = [summary.name || "program loaded"];
+    if (summary.rack) bits.push(summary.rack);
+    bits.push(`${summary.devices} device(s)`);
+    if (summary.panels?.length) bits.push(`${summary.panels.length} panel(s)`);
+    if (summary.named_controls) {
+      bits.push(`${summary.named_controls} named control(s)`);
+    }
+    if (summary.rebound !== undefined) {
+      bits.push(`${summary.rebound} control(s) bound on the stored panel`);
+    }
+    $("g-result").textContent = bits.join(" · ");
+    const notes = [...(summary.warnings || [])];
+    if (summary.compiled) notes.push(`Compiled ${summary.compiled}.`);
+    $("g-detail").textContent = notes.join(" ");
+    $("g-detail").hidden = notes.length === 0;
+  } catch (err) {
+    $("g-result").textContent = "failed: " + err.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/** What was wired up, and why — the part nobody can check afterwards. */
+function showBindings(strips) {
+  const table = $("p-bindings");
+  const body = table.querySelector("tbody");
+  body.innerHTML = "";
+  for (const strip of strips || []) {
+    const row = document.createElement("tr");
+    for (const cell of [
+      String(strip.base),
+      strip.control || "—",
+      strip.level || "—",
+      strip.mute || "—",
+      strip.why || "",
+    ]) {
+      const td = document.createElement("td");
+      td.textContent = cell;
+      row.appendChild(td);
+    }
+    if (!strip.level && !strip.mute) row.className = "unbound";
+    body.appendChild(row);
+  }
+  table.hidden = !(strips && strips.length);
+}
+
+$("g-load").addEventListener("click", () => void loadProgram());
 $("p-load").addEventListener("click", () => void importPanel());
 $("p-screen").addEventListener("change", (event) => {
   void importPanel(event.target.value);

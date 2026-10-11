@@ -28,7 +28,12 @@ from panel_apply import (
 from panel_faceplate import (
     build_faceplate, candidate_screens, main_screen, summarise_faceplate,
 )
+import ha_entities
+from panel_bindings import apply_changes
+from panel_bindings import propose as propose_bindings
 from panel_groups import propose
+from program_reader import ProgramReadError, read_program
+from program_reader import summarise as summarise_program
 from panel_import import PanelError, read_objects, to_faceplate
 from panel_reader import PanelReadError, read_panel
 from cards import (
@@ -524,6 +529,10 @@ async def mixer_card_endpoint(request: web.Request) -> web.Response:
 
 
 PANEL_FILE = Path("/config/crestron-cip/panel.json")
+# The control program, kept beside the panel it explains. Stored parsed
+# rather than raw: the archive contains a login in clear, and there is no
+# reason to keep a copy of that once what is useful has been read out.
+PROGRAM_FILE = Path("/config/crestron-cip/program.json")
 
 # Where a panel's own artwork is put so a card can fetch it.
 #
@@ -695,14 +704,38 @@ async def upload_panel(request: web.Request) -> web.Response:
         "ipid": request.query.get("ipid", ""),
         "port": int(request.query.get("port") or DEFAULT_PORT),
     }
+    # Which panel in the control program this project is. It is normally
+    # the same IP-ID the bridge registers as, since that is what makes it
+    # see this panel's joins, but it can be given on its own so a panel
+    # can be imported and bound before anything is connected.
+    panel_ipid: int | None = None
+    for candidate in (request.query.get("panel_ipid"), assignment["ipid"]):
+        if candidate:
+            try:
+                panel_ipid = parse_ipid(candidate)
+                break
+            except ValueError:
+                continue
     # Pull the panel's own artwork out of the archive and point the
     # faceplate at it. Done before the faceplate is stored, so what is
     # saved is what a card can actually fetch.
     art = export_artwork(body, faceplate, name)
 
+    # Bind the controls to what is already in Home Assistant, using the
+    # control program if one has been loaded. This is the step that makes
+    # an imported panel usable rather than decorative.
+    program = _stored_program()
+    proposal = await _bind_panel(faceplate, program, panel_ipid)
+
     PANEL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PANEL_FILE.write_text(json.dumps(
-        {"name": name, "faceplate": faceplate, "processor": assignment}, indent=1))
+    PANEL_FILE.write_text(json.dumps({
+        "name": name,
+        "faceplate": faceplate,
+        "processor": assignment,
+        "ipid": panel_ipid,
+        "bindings": proposal["entities"],
+        "binding_report": proposal["strips"],
+    }, indent=1))
 
     summary = summarise_faceplate(faceplate)
     result = {
@@ -714,6 +747,12 @@ async def upload_panel(request: web.Request) -> web.Response:
         "joins": summary["bindable"],
         "pages": faceplate.get("pages", []),
         "artwork": art,
+        # What the control program let us wire up without anybody typing
+        # an entity id, and the reasoning behind each one.
+        "room": proposal["room"],
+        "bound": len(proposal["entities"]),
+        "strips": proposal["strips"],
+        "has_program": program is not None,
     }
     if panel is not None:
         # Which screens there were to choose from, so the import page can
@@ -751,6 +790,75 @@ async def upload_panel(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def upload_program(request: web.Request) -> web.Response:
+    """Read the processor's own program and keep what it explains.
+
+    This is what turns an import from a drawing into a working card. The
+    program names the rooms, says which IP-ID each panel is, and names
+    the controls behind the faders — none of which the panel project
+    knows. Only the parsed result is stored; the archive holds a login in
+    clear and is not kept.
+    """
+    body = await request.read()
+    if not body:
+        raise web.HTTPBadRequest(reason="no file received")
+    try:
+        program = read_program(body)
+    except ProgramReadError as err:
+        raise web.HTTPBadRequest(reason=str(err))
+    except Exception as err:
+        logger.warning("Could not read program: %s", err)
+        raise web.HTTPBadRequest(reason=f"could not read the program: {err}")
+
+    PROGRAM_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PROGRAM_FILE.write_text(json.dumps(program, indent=1))
+    summary = summarise_program(program)
+
+    # Re-bind the stored panel now that there is something to bind with,
+    # so loading the program is enough on its own.
+    if PANEL_FILE.exists():
+        stored = json.loads(PANEL_FILE.read_text())
+        bindings = await _bind_panel(stored.get("faceplate") or {}, program,
+                                     stored.get("ipid"))
+        stored["bindings"] = bindings["entities"]
+        stored["binding_report"] = bindings["strips"]
+        PANEL_FILE.write_text(json.dumps(stored, indent=1))
+        summary["rebound"] = len(bindings["entities"])
+    return web.json_response({"ok": True, **summary})
+
+
+def _stored_program() -> dict | None:
+    if not PROGRAM_FILE.exists():
+        return None
+    try:
+        return json.loads(PROGRAM_FILE.read_text())
+    except (OSError, ValueError) as err:
+        logger.warning("Stored program will not load: %s", err)
+        return None
+
+
+async def _bind_panel(faceplate: dict, program: dict | None,
+                      ipid: int | None) -> dict:
+    """Work out what this panel's controls connect to, and wire them."""
+    if not program or not faceplate:
+        return {"entities": {}, "strips": [], "room": {}, "regions": []}
+    entities = await ha_entities.fetch()
+    proposal = propose_bindings(faceplate, program, entities, ipid)
+    apply_changes(faceplate, proposal["regions"])
+    return proposal
+
+
+async def program_info(request: web.Request) -> web.Response:
+    """What was read out of the control program."""
+    program = _stored_program()
+    if program is None:
+        return web.json_response(
+            {"error": "no program loaded — upload the processor's program "
+                      "archive to name the rooms and bind the controls"},
+            status=404)
+    return web.json_response(summarise_program(program))
+
+
 async def panel_card(request: web.Request) -> web.Response:
     """The stored panel as a card, with join keys where entity ids go."""
     if not PANEL_FILE.exists():
@@ -759,16 +867,37 @@ async def panel_card(request: web.Request) -> web.Response:
             status=404)
     stored = json.loads(PANEL_FILE.read_text())
     faceplate = stored["faceplate"]
+
+    # Bind from the program every time rather than from what was stored,
+    # so a control exposed since the import is picked up without anybody
+    # importing again.
+    program = _stored_program()
+    proposal = await _bind_panel(faceplate, program, stored.get("ipid"))
+    bound = proposal["entities"]
+
     roles = sorted({r["role"] for r in faceplate["regions"] if r.get("role")}
                    | {r["target"] for r in faceplate["regions"] if r.get("target")})
+    # A role with nothing behind it keeps its own name, which is what the
+    # card editor shows somebody who wants to fill it in by hand.
+    entities = {role: bound.get(role, role) for role in roles}
+
+    card = {
+        "type": "custom:crestron-panel-card",
+        "title": proposal["room"].get("name") or stored.get("name") or "Panel",
+        "panel": faceplate,
+        "entities": entities,
+        # Draw the whole panel. A control with nothing behind it yet
+        # reads as dark, which keeps the layout recognisable.
+        "hide_unbound": False,
+    }
+    if stored.get("processor", {}).get("name"):
+        card["device"] = stored["processor"]["name"]
     return web.json_response({
-        "card": {
-            "type": "custom:crestron-panel-card",
-            "title": stored.get("name") or "Panel",
-            "panel": faceplate,
-            "entities": {role: role for role in roles},
-        },
+        "card": card,
         "keys": roles,
+        "bound": sorted(bound),
+        "strips": proposal["strips"],
+        "room": proposal["room"],
     })
 
 
@@ -856,6 +985,8 @@ def build_app(hub: Hub) -> web.Application:
         web.get("/api/cards/room", room_card_endpoint),
         web.get("/api/cards/mixer", mixer_card_endpoint),
         web.post("/api/panel/upload", upload_panel),
+        web.post("/api/program/upload", upload_program),
+        web.get("/api/program", program_info),
         web.get("/api/cards/panel", panel_card),
         web.get("/api/cards/mixer/roles", mixer_roles),
         web.get("/api/integration/joins", integration_joins),

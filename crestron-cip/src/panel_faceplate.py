@@ -101,14 +101,34 @@ def _only_reserved(obj: dict[str, Any]) -> bool:
     return bool(joins) and all(e.get("reserved") for e in joins)
 
 
+# A placeholder a designer left for themselves, which is a prompt rather
+# than a label. Shown on a card it reads as a value that failed to load —
+# but it is still the only thing in the project that says what the
+# control is for, so it is kept out of sight rather than thrown away.
+_PLACEHOLDER = re.compile(
+    r"(header|button|zone|room|source|srouce|mic|media|name)"
+    r"[\s_-]*(text|name|label)?",
+    re.I,
+)
+
+
 def _label_of(obj: dict[str, Any]) -> str:
     text = (obj.get("label") or "").strip()
-    # Placeholder names a designer left behind are not labels. "Header
-    # Text" and "Room Name" are prompts to themselves, and showing them on
-    # a card reads as a value that failed to load.
-    if re.fullmatch(r"(header|button|zone|room|source|mic)\s*(text|name)?", text, re.I):
+    if _PLACEHOLDER.fullmatch(text):
         return ""
     return text
+
+
+def _hint_of(obj: dict[str, Any]) -> str:
+    """The designer's own word for what a control is, where it is one.
+
+    The third volume strip on a joined room reads "Mic Name" in the
+    editor and the other room's microphone name at run time. That
+    placeholder is what says it is a microphone and not a source, which
+    is the difference between muting the right room and the wrong one.
+    """
+    text = (obj.get("label") or "").strip()
+    return text if _PLACEHOLDER.fullmatch(text) else ""
 
 
 def _style_of(obj: dict[str, Any]) -> dict[str, Any]:
@@ -204,6 +224,9 @@ def region_for(obj: dict[str, Any], index: int) -> dict[str, Any] | None:
         join = text_joins[0] if text_joins else None
         base["role"] = _role("text", join, index) if join is not None else ""
         base["text"] = label
+        hint = _hint_of(obj)
+        if hint:
+            base["hint"] = hint
         base["align"] = {
             "Center": "middle", "Right": "end", "Left": "start",
         }.get(obj.get("align") or "", "start")
