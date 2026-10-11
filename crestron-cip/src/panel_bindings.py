@@ -312,13 +312,34 @@ def propose(
             entry["level_control"] = level_name
             entry["mute_control"] = mute_name
 
+            # The control's name travels with the region whether or not
+            # the add-on could resolve it. The card runs in the browser
+            # with Home Assistant in front of it, so it can finish the
+            # job — and it re-finishes it whenever an entity appears,
+            # which an import done once cannot.
+            if level_name:
+                changes.append({
+                    "role": strip["level_role"],
+                    "control": level_name,
+                    "control_kind": "level",
+                })
+            if mute_name and strip["buttons"].get("mute"):
+                changes.append({
+                    "role": strip["buttons"]["mute"],
+                    "control": mute_name,
+                    "control_kind": "mute",
+                })
+
             if level:
                 bindings[strip["level_role"]] = level
+            if level_name:
                 # The up and down keys step the thing the bar shows. On
                 # the panel they drive the same control through the
                 # program; here they drive it directly, because the
                 # digital joins behind them are not exposed and need not
-                # be.
+                # be. Wired from the control's name rather than from a
+                # resolved entity, so the keys work as soon as the bar
+                # does.
                 for action in ("up", "down"):
                     role = strip["buttons"].get(action)
                     if role:
@@ -327,9 +348,10 @@ def propose(
                             "action": f"level_{action}",
                             "target": strip["level_role"],
                         })
-            if mute and strip["buttons"].get("mute"):
+            if strip["buttons"].get("mute") and (mute or mute_name):
                 role = strip["buttons"]["mute"]
-                bindings[role] = mute
+                if mute:
+                    bindings[role] = mute
                 changes.append({
                     "role": role, "action": "mute_toggle", "target": role,
                 })
@@ -352,7 +374,11 @@ def apply_changes(faceplate: dict[str, Any], changes: list[dict[str, Any]]) -> i
     applied = 0
     for change in changes:
         for region in by_role.get(change["role"], []):
-            region["action"] = change["action"]
-            region["target"] = change["target"]
+            if "action" in change:
+                region["action"] = change["action"]
+                region["target"] = change["target"]
+            if "control" in change:
+                region["control"] = change["control"]
+                region["control_kind"] = change["control_kind"]
             applied += 1
     return applied

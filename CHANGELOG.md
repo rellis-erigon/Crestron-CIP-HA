@@ -3,6 +3,16 @@
 The add-on and the Home Assistant integration are released as a matched
 pair and share a version number. CI fails the build if they drift.
 
+## 0.14.1 — 2026-10-12
+
+- **Fix**: Binding no longer depends on the add-on being able to reach
+  Home Assistant. The Supervisor token did not arrive in the container
+  on at least one install, and the only symptom was a card that bound
+  nothing — no error, no clue. The control name an import works out now
+  travels with the card, which resolves it in the browser where Home
+  Assistant is always in front of it. It also re-resolves on every
+  render, so a control exposed later binds without importing again.
+
 ## 0.14.0 — 2026-10-12
 
 - **Feature**: Load the processor's control program and a panel binds
