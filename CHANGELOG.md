@@ -3,6 +3,15 @@
 The add-on and the Home Assistant integration are released as a matched
 pair and share a version number. CI fails the build if they drift.
 
+## 0.14.2 — 2026-10-12
+
+- **Fix**: The generated card filled every unbound role with its own
+  name as a placeholder. The card reads an entry in that map as
+  somebody's deliberate choice and stops looking, so the placeholder
+  blocked the automatic resolution it was standing in for. Only roles
+  that actually resolved are listed now; the rest are left for the card
+  to work out or for the editor to offer.
+
 ## 0.14.1 — 2026-10-12
 
 - **Fix**: Binding no longer depends on the add-on being able to reach

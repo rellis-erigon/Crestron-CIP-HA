@@ -877,9 +877,11 @@ async def panel_card(request: web.Request) -> web.Response:
 
     roles = sorted({r["role"] for r in faceplate["regions"] if r.get("role")}
                    | {r["target"] for r in faceplate["regions"] if r.get("target")})
-    # A role with nothing behind it keeps its own name, which is what the
-    # card editor shows somebody who wants to fill it in by hand.
-    entities = {role: bound.get(role, role) for role in roles}
+    # Only what really resolved. A role filled with its own name as a
+    # placeholder reads to the card as somebody's explicit choice, and an
+    # explicit choice stops it looking any further — so the placeholder
+    # would block the very resolution it was standing in for.
+    entities = {role: entity for role, entity in bound.items() if entity}
 
     card = {
         "type": "custom:crestron-panel-card",
