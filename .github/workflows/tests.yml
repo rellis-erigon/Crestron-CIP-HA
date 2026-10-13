@@ -43,8 +43,10 @@ jobs:
           python-version: "3.13"
       - name: Install dependencies
         # aiohttp for real, so the stand-in in tests/_ha_stub.py is only
-        # ever covering Home Assistant itself.
-        run: pip install pytest pytest-asyncio aiohttp
+        # ever covering Home Assistant itself. voluptuous and pyyaml are
+        # imported by the integration but are not stubbed: they are pure
+        # Python and install anywhere.
+        run: pip install pytest pytest-asyncio aiohttp voluptuous pyyaml
       - name: Run integration tests
         # The suite stubs Home Assistant when it is absent, so this runs
         # without a 400 MB dependency tree. See tests/_ha_stub.py.

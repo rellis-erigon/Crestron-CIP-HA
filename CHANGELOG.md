@@ -5,6 +5,9 @@ pair and share a version number. CI fails the build if they drift.
 
 ## 0.14.3 — 2026-10-13
 
+- **Fix**: Stop declaring `aiohttp` in the manifest. Home Assistant ships
+  it, and a custom integration that lists it is rejected — caught by the
+  hassfest check this release adds.
 - **Fix**: Register a device for each control processor instead of leaving
   one implied. Zone devices hung off the processor with `via_device`, which
   Home Assistant removes in 2027.8 — and which accepted an identifier
