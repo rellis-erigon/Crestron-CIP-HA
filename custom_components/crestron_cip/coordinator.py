@@ -22,10 +22,12 @@ from typing import Any
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.core import callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import CONF_ADDON_URL, RECONCILE_INTERVAL
+from .const import CONF_ADDON_URL, DOMAIN, RECONCILE_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,6 +89,9 @@ class CrestronCoordinator(DataUpdateCoordinator[dict[str, JoinData]]):
         self.entry = entry
         self.url = entry.data[CONF_ADDON_URL].rstrip("/")
         self.processors: dict[str, dict] = {}
+        # Registry ids of the processor devices, keyed by processor name. Zone
+        # devices hang off these; see async_register_processor_devices.
+        self.processor_device_ids: dict[str, str] = {}
         self._session = async_get_clientsession(hass)
         self._stream_task: asyncio.Task | None = None
         self._known_keys: set[str] = set()
@@ -106,6 +111,7 @@ class CrestronCoordinator(DataUpdateCoordinator[dict[str, JoinData]]):
             raise UpdateFailed(f"Could not reach the add-on: {err}") from err
 
         self.processors = payload.get("processors", {})
+        self.async_register_processor_devices()
         joins = {}
         for entry in payload.get("joins", []):
             try:
@@ -119,6 +125,36 @@ class CrestronCoordinator(DataUpdateCoordinator[dict[str, JoinData]]):
         # something to listen to.
         self._ensure_stream()
         return joins
+
+    @callback
+    def async_register_processor_devices(self) -> None:
+        """Give every processor a device of its own.
+
+        Zones belong to a processor, and a link can only be made to a device
+        that exists. Until now the processor device was implied by whichever
+        joins happened to be ungrouped — so a processor whose joins were all
+        grouped had none, and the zones pointed at nothing. Registering them
+        here makes `via_device_id` on the zone devices valid. Called on every
+        refresh, so a processor added in the add-on later is picked up.
+
+        The identifiers match what the entities use, which keeps the devices
+        people have already named and placed.
+        """
+        registry = dr.async_get(self.hass)
+        for name, processor in self.processors.items():
+            kwargs = {
+                "identifiers": {(DOMAIN, f"{DOMAIN}_{name}")},
+                "name": name,
+                "manufacturer": "Crestron",
+                "model": "Control processor",
+            }
+            host = processor.get("host") if isinstance(processor, dict) else None
+            if host:
+                kwargs["configuration_url"] = f"http://{host}"
+            device = registry.async_get_or_create(
+                config_entry_id=self.entry.entry_id, **kwargs
+            )
+            self.processor_device_ids[name] = device.id
 
     # -- live stream -----------------------------------------------------
 

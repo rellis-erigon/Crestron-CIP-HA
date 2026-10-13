@@ -7,7 +7,7 @@ a room is behaving oddly, not something to put on a dashboard.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass, SensorEntity, SensorStateClass,

@@ -6,6 +6,20 @@ on:
   pull_request:
 
 jobs:
+  site-detail:
+    name: No site-specific detail
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # This repository is public and was developed against a working
+      # building. A real address or room number in it tells a reader how
+      # that estate is laid out, so this is a build check rather than care.
+      - name: Check
+        run: python3 scripts/check-no-site-detail.py
+
   addon:
     name: Add-on tests
     runs-on: ubuntu-latest
@@ -18,3 +32,27 @@ jobs:
         run: pip install pytest pytest-asyncio pytest-aiohttp aiohttp
       - name: Run add-on tests
         run: pytest crestron-cip/tests -q
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        # aiohttp for real, so the stand-in in tests/_ha_stub.py is only
+        # ever covering Home Assistant itself.
+        run: pip install pytest pytest-asyncio aiohttp
+      - name: Run integration tests
+        # The suite stubs Home Assistant when it is absent, so this runs
+        # without a 400 MB dependency tree. See tests/_ha_stub.py.
+        run: pytest tests -q
+
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master

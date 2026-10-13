@@ -210,22 +210,22 @@ class FakeHub:
 def test_a_panel_brings_its_processor_and_connects_now():
     """Waiting for a restart would make a one-click import a two-step one."""
     hub = FakeHub()
-    assert pa.attach_processor(hub, "Reception", "10.0.0.5", 3) == "added"
-    assert hub.connections["Reception"].host == "10.0.0.5"
+    assert pa.attach_processor(hub, "Reception", "192.0.2.15", 3) == "added"
+    assert hub.connections["Reception"].host == "192.0.2.15"
     assert hub.started == ["Reception"]
 
 
 def test_re_importing_the_same_panel_is_not_a_second_connection():
     hub = FakeHub()
-    pa.attach_processor(hub, "Reception", "10.0.0.5", 3)
-    assert pa.attach_processor(hub, "Reception", "10.0.0.5", 3) == "unchanged"
+    pa.attach_processor(hub, "Reception", "192.0.2.15", 3)
+    assert pa.attach_processor(hub, "Reception", "192.0.2.15", 3) == "unchanged"
     assert hub.started == ["Reception"]
 
 
 def test_a_name_already_pointing_elsewhere_is_refused():
     """Silently moving a processor would take its joins with it."""
     hub = FakeHub()
-    pa.attach_processor(hub, "Reception", "10.0.0.5", 3)
+    pa.attach_processor(hub, "Reception", "192.0.2.15", 3)
     with pytest.raises(pa.ApplyError) as err:
-        pa.attach_processor(hub, "Reception", "10.0.0.9", 3)
+        pa.attach_processor(hub, "Reception", "192.0.2.19", 3)
     assert "already connected" in str(err.value)

@@ -3,6 +3,25 @@
 The add-on and the Home Assistant integration are released as a matched
 pair and share a version number. CI fails the build if they drift.
 
+## 0.14.3 — 2026-10-13
+
+- **Fix**: Register a device for each control processor instead of leaving
+  one implied. Zone devices hung off the processor with `via_device`, which
+  Home Assistant removes in 2027.8 — and which accepted an identifier
+  whether or not anything had created that device. It happened to exist
+  because ungrouped joins and the diagnostic sensors declare it, so a
+  processor whose every join carried a group had no device and its zones
+  pointed at nothing. The processor is now registered on each refresh, with
+  a link to its own web interface, and zones reference it by registry id.
+  Its identifiers are unchanged, so processors already named and placed in
+  Home Assistant stay as they are.
+- Added integration tests. The add-on had 282 of them and the integration
+  had none; there are now 15 covering the processor device and the zone
+  link, with Home Assistant stubbed so they need no install of it.
+- Added a build check that fails on site-specific detail, matching the
+  sibling repositories, and moved six placeholder addresses in tests and
+  one in a docstring into the documentation range.
+
 ## 0.14.2 — 2026-10-12
 
 - **Fix**: The generated card filled every unbound role with its own

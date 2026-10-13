@@ -37,8 +37,13 @@ class CrestronEntity(CoordinatorEntity[CrestronCoordinator]):
                 name=group,
                 manufacturer="Crestron",
                 model="Zone",
-                via_device=(DOMAIN, f"{DOMAIN}_{join.processor}"),
             )
+            # Hang the zone off its processor's device by registry id.
+            # `via_device` is deprecated (removed in 2027.8), and it accepted
+            # an identifier whether or not anything had created that device.
+            device_id = coordinator.processor_device_ids.get(join.processor)
+            if device_id:
+                self._attr_device_info["via_device_id"] = device_id
         if join.precision is not None:
             self._attr_suggested_display_precision = join.precision
 

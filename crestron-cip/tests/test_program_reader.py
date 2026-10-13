@@ -44,7 +44,7 @@ CLOUD = (
     "DeviceComment3=Funct Rm 1 Proj\n"
 ).encode()
 
-DIP = "[IPTable]\nid0=03\naddr0=127.0.0.1\nid1=21\naddr1=10.0.0.9\n".encode()
+DIP = "[IPTable]\nid0=03\naddr0=127.0.0.1\nid1=21\naddr1=192.0.2.19\n".encode()
 
 
 # -- the device table ---------------------------------------------------

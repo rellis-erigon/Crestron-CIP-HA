@@ -637,7 +637,7 @@ def parse_ipid(raw: str) -> int:
 def check_host(host: str) -> None:
     """Refuse an address that cannot be what was meant.
 
-    A mistyped octet — `1982.168.33.2` for `192.168.33.2` — otherwise
+    A mistyped octet — `1920.0.2.10` for `192.0.2.10` — otherwise
     becomes a connection attempt that fails later, somewhere the person
     who typed it will not see it.
     """
