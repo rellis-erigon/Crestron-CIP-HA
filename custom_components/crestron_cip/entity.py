@@ -1,83 +1,49 @@
-"""Base entity for the Crestron CIP integration."""
+"""Shared base for Crestron CIP feedback entities."""
 from __future__ import annotations
 
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.core import callback
+from homeassistant.helpers.device_info import DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import Entity
 
-from .const import DOMAIN
-from .coordinator import CrestronCoordinator, JoinData
+from .const import DOMAIN, SIGNAL_CONN, SIGNAL_VALUE
+from .hub import CrestronHub
 
 
-class CrestronEntity(CoordinatorEntity[CrestronCoordinator]):
-    """One exposed join."""
+class CrestronJoinEntity(Entity):
+    """Base for an entity bound to one feedback join."""
 
-    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _kind: str = ""
 
-    def __init__(self, coordinator: CrestronCoordinator, join: JoinData) -> None:
-        super().__init__(coordinator)
-        self._store_key = join.store_key
-        # Keyed on processor and join rather than the config entry, so
-        # removing and re-adding the integration keeps the same entities.
-        self._attr_unique_id = f"crestron_cip_{join.processor}_{join.key}"
-        self._attr_name = join.name
-        # One device per group. Without grouping every join on a
-        # processor lands in a single device, which for a sixteen-zone
-        # BGM system means one device holding eighty-one entities.
-        group = join.group or join.processor
-        if group == join.processor:
-            self._attr_device_info = DeviceInfo(
-                identifiers={(DOMAIN, f"{DOMAIN}_{join.processor}")},
-                name=join.processor,
-                manufacturer="Crestron",
-                model="Control processor",
-            )
-        else:
-            self._attr_device_info = DeviceInfo(
-                identifiers={(DOMAIN, f"{DOMAIN}_{join.processor}_{group}")},
-                name=group,
-                manufacturer="Crestron",
-                model="Zone",
-            )
-            # Hang the zone off its processor's device by registry id.
-            # `via_device` is deprecated (removed in 2027.8), and it accepted
-            # an identifier whether or not anything had created that device.
-            device_id = coordinator.processor_device_ids.get(join.processor)
-            if device_id:
-                self._attr_device_info["via_device_id"] = device_id
-        if join.precision is not None:
-            self._attr_suggested_display_precision = join.precision
-
-    @property
-    def join(self) -> JoinData | None:
-        if not self.coordinator.data:
-            return None
-        return self.coordinator.data.get(self._store_key)
-
-    @property
-    def available(self) -> bool:
-        """Available only when the processor itself is registered.
-
-        A join that has not changed since the add-on connected still holds
-        its last value, so presence in the data alone says nothing about
-        whether the processor is answering.
-        """
-        join = self.join
-        return bool(
-            self.coordinator.last_update_success and join and join.available
+    def __init__(self, hub: CrestronHub, join: int) -> None:
+        self._hub = hub
+        self._join = join
+        self._attr_unique_id = f"{hub.unique_id}_{self._kind}_{join}"
+        self._attr_name = hub.name_for(self._kind, join)
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, hub.unique_id)},
+            name=hub.name,
+            manufacturer="Crestron",
+            model=f"CIP IPID 0x{hub.ipid:02X}",
+            configuration_url=None,
         )
 
     @property
-    def extra_state_attributes(self) -> dict:
-        join = self.join
-        if join is None:
-            return {}
-        return {"processor": join.processor, "join": join.key}
+    def available(self) -> bool:
+        return self._hub.available
 
-    def _scaled(self, value) -> float | None:
-        join = self.join
-        if join is None or value is None:
-            return None
-        try:
-            return float(value) * join.scale
-        except (TypeError, ValueError):
-            return None
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(async_dispatcher_connect(
+            self.hass,
+            SIGNAL_VALUE.format(entry=self._hub.entry.entry_id, kind=self._kind, join=self._join),
+            self._handle_value,
+        ))
+        self.async_on_remove(async_dispatcher_connect(
+            self.hass, SIGNAL_CONN.format(entry=self._hub.entry.entry_id),
+            lambda _up: self.async_write_ha_state(),
+        ))
+
+    @callback
+    def _handle_value(self, value) -> None:  # overridden
+        self.async_write_ha_state()

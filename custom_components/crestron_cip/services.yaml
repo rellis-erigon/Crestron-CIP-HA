@@ -1,61 +1,62 @@
-rescan:
-  name: Re-scan joins
-  description: >-
-    Ask the add-on to re-read joins from the Crestron processor. Use this after a
-    change on the processor rather than waiting for a reconnect.
+press:
+  name: Press (pulse digital)
+  description: Momentarily assert a digital join (button press), then release.
   fields:
-    processor:
-      name: Crestron processor
-      description: Limit the scan to one processor. Omit to scan all of them.
-      required: false
-      selector:
-        text:
-
-generate_room_card:
-  name: Generate room card
-  description: >-
-    Build a room-controller-card for a processor by matching its exposed
-    joins to room roles by name. Returns the card, its YAML, and what the
-    match decided — check that before trusting it.
-  fields:
-    processor:
-      name: Crestron processor
-      description: Which processor's joins to use. Omit to use all of them.
-      required: false
-      selector:
-        text:
-
-generate_panel_card:
-  name: Generate panel card
-  description: >-
-    The XPanel imported in the add-on, as a card with real entity ids.
-    Import the panel with its processor address first so the joins exist.
-
-generate_mixer_card:
-  name: Generate mixer card
-  description: >-
-    The zone-mixer console built in the add-on, as a card with real
-    entity ids. Group the zones and expose their joins first.
-  fields:
-    processor:
-      name: Crestron processor
-      description: Which processor's zones to use.
-      required: false
-      selector:
-        text:
-    roles:
-      name: Properties
-      description: >-
-        What each channel carries, as role:signal:offset — for example
-        volume:a:0,mute:d:0. Omit for the add-on's default.
-      required: false
-      selector:
-        text:
-    per_row:
-      name: Strips per row
-      description: The console wraps past this. Eight by default.
-      required: false
+    join:
+      name: Join
+      description: Digital join number (1-based).
+      required: true
+      example: 12
       selector:
         number:
           min: 1
-          max: 16
+          max: 65535
+          mode: box
+    duration:
+      name: Duration
+      description: Hold time in seconds before release.
+      required: false
+      example: 0.1
+      selector:
+        number:
+          min: 0.05
+          max: 10
+          step: 0.05
+          mode: box
+    entry_id:
+      name: Config entry
+      description: Target a specific Crestron connection (optional; defaults to all).
+      required: false
+      selector:
+        config_entry:
+          integration: crestron_cip
+
+set_digital:
+  name: Set digital
+  description: Hold a digital join high or low.
+  fields:
+    join: { name: Join, required: true, selector: { number: { min: 1, max: 65535, mode: box } } }
+    value: { name: Value, required: true, selector: { boolean: {} } }
+    entry_id: { name: Config entry, required: false, selector: { config_entry: { integration: crestron_cip } } }
+
+set_analog:
+  name: Set analog
+  description: Set a 16-bit analog join value (0-65535).
+  fields:
+    join: { name: Join, required: true, selector: { number: { min: 1, max: 65535, mode: box } } }
+    value: { name: Value, required: true, selector: { number: { min: 0, max: 65535, mode: box } } }
+    entry_id: { name: Config entry, required: false, selector: { config_entry: { integration: crestron_cip } } }
+
+set_serial:
+  name: Set serial
+  description: Send a string to a serial join.
+  fields:
+    join: { name: Join, required: true, selector: { number: { min: 1, max: 65535, mode: box } } }
+    value: { name: Text, required: true, selector: { text: {} } }
+    entry_id: { name: Config entry, required: false, selector: { config_entry: { integration: crestron_cip } } }
+
+request_update:
+  name: Request update
+  description: Ask the processor to re-send the current state of all joins.
+  fields:
+    entry_id: { name: Config entry, required: false, selector: { config_entry: { integration: crestron_cip } } }

@@ -1,116 +1,81 @@
-"""Config flow for the Crestron CIP integration."""
+"""Config flow for Crestron CIP."""
 from __future__ import annotations
 
-import logging
-import os
 from typing import Any
 
-import aiohttp
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow
-from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
+import homeassistant.helpers.config_validation as cv
 
+import os
+
+from .client import CIPClient
 from .const import (
-    ADDON_SLUG_SUFFIX,
-    CONF_ADDON_URL,
-    DEFAULT_ADDON_URL,
-    DEFAULT_INGRESS_PORT,
-    DOMAIN,
-    SUPERVISOR_API,
+    CONF_IPID, CONF_PROJECT_FILE, CONF_SSL, DEFAULT_NAME, DEFAULT_PORT,
+    DEFAULT_TLS_PORT, DOMAIN,
 )
+from .project_loader import load_project
 
-_LOGGER = logging.getLogger(__name__)
 
-
-async def async_discover_addon_url(hass: HomeAssistant) -> str | None:
-    """Ask Supervisor where the Crestron CIP add-on is reachable.
-
-    The add-on's hostname includes a per-install repository hash, so it
-    cannot be guessed; asking is the only reliable way. Returns None when
-    not running under Supervisor, or when the add-on is not installed.
-    """
-    token = os.environ.get("SUPERVISOR_TOKEN")
-    if not token:
-        return None
-
-    headers = {"Authorization": f"Bearer {token}"}
-    session = async_get_clientsession(hass)
-    timeout = aiohttp.ClientTimeout(total=10)
-
+def _validate_project(path: str) -> bool:
     try:
-        async with session.get(
-            f"{SUPERVISOR_API}/addons", headers=headers, timeout=timeout,
-        ) as response:
-            response.raise_for_status()
-            addons = (await response.json()).get("data", {}).get("addons", [])
+        return os.path.exists(path) and len(load_project(path)) > 0
+    except Exception:  # noqa: BLE001
+        return False
 
-        slug = next(
-            (a["slug"] for a in addons
-             if a.get("slug", "").endswith(ADDON_SLUG_SUFFIX)),
-            None,
-        )
-        if not slug:
-            return None
 
-        async with session.get(
-            f"{SUPERVISOR_API}/addons/{slug}/info", headers=headers, timeout=timeout,
-        ) as response:
-            response.raise_for_status()
-            info = (await response.json()).get("data", {})
-    except (aiohttp.ClientError, TimeoutError, ValueError) as err:
-        _LOGGER.debug("Add-on discovery via Supervisor failed: %s", err)
-        return None
-
-    host = info.get("hostname") or slug.replace("_", "-")
-    port = info.get("ingress_port") or DEFAULT_INGRESS_PORT
-    return f"http://{host}:{port}"
+async def _try_connect(host: str, ipid: int, port: int | None, use_ssl: bool) -> str | None:
+    """Return None on success, or an error key on failure."""
+    client = CIPClient(host, ipid, port=port, use_ssl=use_ssl)
+    try:
+        await client.connect(timeout=12.0)
+    except Exception:  # noqa: BLE001
+        return "cannot_connect"
+    finally:
+        await client.close()
+    return None
 
 
 class CrestronCipConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Point the integration at the add-on."""
-
     VERSION = 1
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None,
-    ) -> FlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
-        exposed = processors = 0
-
         if user_input is not None:
-            url = user_input[CONF_ADDON_URL].rstrip("/")
-            await self.async_set_unique_id(url)
-            self._abort_if_unique_id_configured()
-
-            session = async_get_clientsession(self.hass)
+            use_ssl = user_input[CONF_SSL]
+            port = user_input.get(CONF_PORT) or (DEFAULT_TLS_PORT if use_ssl else DEFAULT_PORT)
             try:
-                async with session.get(
-                    f"{url}/api/integration/joins",
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response:
-                    response.raise_for_status()
-                    payload = await response.json()
-                exposed = len(payload.get("joins", []))
-                processors = len(payload.get("processors", {}))
-            except (aiohttp.ClientError, TimeoutError, ValueError) as err:
-                _LOGGER.debug("Could not reach the add-on at %s: %s", url, err)
-                errors["base"] = "cannot_connect"
+                ipid = int(str(user_input[CONF_IPID]), 0)  # accepts "3" or "0x03"
+            except ValueError:
+                ipid = -1
+            project_file = (user_input.get(CONF_PROJECT_FILE) or "").strip()
+            if not (1 <= ipid <= 0xFE):
+                errors[CONF_IPID] = "invalid_ipid"
+            elif project_file and not await self.hass.async_add_executor_job(_validate_project, project_file):
+                errors[CONF_PROJECT_FILE] = "bad_project"
+            else:
+                uid = f"{user_input[CONF_HOST]}-{ipid:02x}"
+                await self.async_set_unique_id(uid)
+                self._abort_if_unique_id_configured()
+                err = await _try_connect(user_input[CONF_HOST], ipid, port, use_ssl)
+                if err:
+                    errors["base"] = err
+                else:
+                    return self.async_create_entry(
+                        title=f"{user_input.get(CONF_NAME, DEFAULT_NAME)} ({user_input[CONF_HOST]} / IPID {ipid:02X})",
+                        data={CONF_HOST: user_input[CONF_HOST], CONF_IPID: ipid,
+                              CONF_PORT: port, CONF_SSL: use_ssl,
+                              CONF_NAME: user_input.get(CONF_NAME, DEFAULT_NAME),
+                              CONF_PROJECT_FILE: project_file},
+                    )
 
-            if not errors:
-                return self.async_create_entry(
-                    title=f"Crestron CIP ({exposed} joins, "
-                          f"{processors} processor{'s' if processors != 1 else ''})",
-                    data={CONF_ADDON_URL: url},
-                )
-
-        suggested = await async_discover_addon_url(self.hass) or DEFAULT_ADDON_URL
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema({
-                vol.Required(CONF_ADDON_URL, default=suggested): str,
-            }),
-            errors=errors,
-            description_placeholders={"url": suggested},
-        )
+        schema = vol.Schema({
+            vol.Required(CONF_HOST): cv.string,
+            vol.Required(CONF_IPID, default="0x03"): cv.string,
+            vol.Required(CONF_SSL, default=False): cv.boolean,
+            vol.Optional(CONF_PORT): cv.port,
+            vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
+            vol.Optional(CONF_PROJECT_FILE, default=""): cv.string,
+        })
+        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)

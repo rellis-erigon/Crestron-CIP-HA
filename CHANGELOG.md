@@ -1,7 +1,34 @@
 # Changelog
 
-The add-on and the Home Assistant integration are released as a matched
-pair and share a version number. CI fails the build if they drift.
+## 0.15.0 — 2026-10-23
+
+**Breaking: the add-on is gone.** The repository is now a single custom
+integration that holds the CIP connection itself. Configuration does not
+carry over. Remove the Crestron CIP Bridge add-on and the old integration
+entries, then add the integration again. 0.14.3 is kept on the
+`addon-0.14.3` branch.
+
+- Config flow: host, IPID (hex or decimal), TLS, port, and an optional
+  project file (`.c3p` or panel `.zip`).
+- Entities are created as feedback joins arrive: digital joins as binary
+  sensors, serial joins as sensors, analog joins as numbers. A connection
+  sensor is created for each processor.
+- With a project file, joins take the panel's own labels and each press
+  join gets a button.
+- SmartObject lists are decoded into their serial joins.
+- Actions: `press`, `set_digital`, `set_analog`, `set_serial` and
+  `request_update`.
+- Reconnects after a drop, or after 45 s without a heartbeat reply,
+  backing off from 5 s to 60 s.
+- An `ff ff 02` registration reply (IPID not in the program) fails the
+  connection instead of appearing to connect.
+- Analog numbers are disabled by default. Writing has not been tested on
+  live hardware.
+
+## Before 0.15.0
+
+The add-on and the Home Assistant integration were released as a matched
+pair and shared a version number.
 
 ## 0.14.3 — 2026-10-13
 

@@ -1,30 +1,32 @@
 """Constants for the Crestron CIP integration."""
+from __future__ import annotations
 
 DOMAIN = "crestron_cip"
 
-CONF_ADDON_URL = "addon_url"
+CONF_IPID = "ipid"
+CONF_SSL = "ssl"
+CONF_PROJECT_FILE = "project_file"
+# CONF_HOST, CONF_PORT, CONF_NAME come from homeassistant.const
 
-# The add-on's hostname carries a per-install repository hash, so the URL is
-# discovered through Supervisor rather than assumed. This is only the
-# fallback shown in the form.
-DEFAULT_ADDON_URL = "http://localhost:8099"
-DEFAULT_INGRESS_PORT = 8099
-ADDON_SLUG_SUFFIX = "crestron-cip"
-SUPERVISOR_API = "http://supervisor"
+DEFAULT_PORT = 41794
+DEFAULT_TLS_PORT = 41796
+DEFAULT_NAME = "Crestron"
 
-# The event stream carries join changes as they happen; this poll only
-# reconciles the join list itself — joins newly exposed, renamed or removed
-# in the add-on UI.
-RECONCILE_INTERVAL = 30
+PLATFORMS = ["binary_sensor", "sensor", "number", "button"]
 
-PLATFORMS = [
-    "binary_sensor",
-    "button",
-    "number",
-    "sensor",
-    "switch",
-    "text",
-]
+# dispatcher signals
+SIGNAL_CONN = f"{DOMAIN}_conn_{{entry}}"              # connectivity changed
+SIGNAL_NEW = f"{DOMAIN}_new_{{entry}}"                # (kind, join) new feedback join seen
+SIGNAL_VALUE = f"{DOMAIN}_val_{{entry}}_{{kind}}_{{join}}"  # value update for one join
 
-# Analog joins are unsigned 16-bit on the wire.
-ANALOG_MAX = 65535
+# services
+SERVICE_PRESS = "press"
+SERVICE_SET_DIGITAL = "set_digital"
+SERVICE_SET_ANALOG = "set_analog"
+SERVICE_SET_SERIAL = "set_serial"
+SERVICE_REQUEST_UPDATE = "request_update"
+
+ATTR_JOIN = "join"
+ATTR_VALUE = "value"
+ATTR_DURATION = "duration"
+ATTR_ENTRY_ID = "entry_id"

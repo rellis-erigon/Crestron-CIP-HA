@@ -1,53 +1,45 @@
-"""Analog joins that can be set: volume, dim level, setpoint."""
+"""Numbers: one per analog join, auto-created. Readable feedback + writable (set_analog)."""
 from __future__ import annotations
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ANALOG_MAX
-from .entity import CrestronEntity
-from .helpers import setup_kind
+from .const import DOMAIN, SIGNAL_NEW
+from .entity import CrestronJoinEntity
+from .hub import CrestronHub
 
 
-async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    setup_kind(hass, entry, async_add_entities, "number", CrestronNumber)
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+    hub: CrestronHub = hass.data[DOMAIN][entry.entry_id]
+
+    @callback
+    def _add(kind: str, join: int) -> None:
+        if kind == "analog":
+            async_add_entities([CrestronAnalog(hub, join)])
+
+    entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_NEW.format(entry=entry.entry_id), _add))
+    for join in hub.known("analog"):
+        _add("analog", join)
 
 
-class CrestronNumber(CrestronEntity, NumberEntity):
-    _attr_mode = NumberMode.SLIDER
+class CrestronAnalog(CrestronJoinEntity, NumberEntity):
+    _kind = "analog"
     _attr_native_min_value = 0
-
-    @property
-    def native_max_value(self) -> float:
-        # An analog join is unsigned 16-bit on the wire but usually means
-        # 0-100%, so the scale set in the add-on decides what the slider
-        # actually spans.
-        join = self.join
-        return ANALOG_MAX * (join.scale if join else 1.0)
-
-    @property
-    def native_step(self) -> float:
-        join = self.join
-        return join.scale if join and join.scale else 1.0
+    _attr_native_max_value = 65535
+    _attr_native_step = 1
+    _attr_mode = NumberMode.BOX
+    # Changing the number writes the join to the processor. Writing has not
+    # been tested on live hardware, so these start disabled.
+    _attr_entity_registry_enabled_default = False
 
     @property
     def native_value(self) -> float | None:
-        join = self.join
-        return self._scaled(join.value) if join else None
-
-    @property
-    def native_unit_of_measurement(self) -> str | None:
-        join = self.join
-        return (join.unit or None) if join else None
+        v = self._hub.client.analog.get(self._join)
+        return float(v) if v is not None else None
 
     async def async_set_native_value(self, value: float) -> None:
-        join = self.join
-        if join is None:
-            return
-        raw = round(value / join.scale) if join.scale else round(value)
-        await self.coordinator.async_set(join, value=max(0, min(ANALOG_MAX, raw)))
+        await self._hub.client.set_analog(self._join, int(value))
+        self.async_write_ha_state()

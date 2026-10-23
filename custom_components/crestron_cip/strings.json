@@ -3,17 +3,24 @@
     "step": {
       "user": {
         "title": "Crestron CIP",
-        "description": "Connects to the Crestron CIP Bridge add-on, which holds the processor connections and the joins you chose to expose.",
+        "description": "Connect to a Crestron control processor over CIP. The integration registers as a device at the given IPID (use a spare IPID slot in the processor's program).",
         "data": {
-          "addon_url": "Add-on URL"
+          "host": "Host / IP address",
+          "ipid": "IPID (hex like 0x03, or decimal)",
+          "ssl": "Use TLS (secure CIP)",
+          "port": "Port (optional; defaults 41794, or 41796 for TLS)",
+          "name": "Name",
+          "project_file": "Project file (optional): path to a .c3p or panel .zip to name joins and create buttons"
         }
       }
     },
     "error": {
-      "cannot_connect": "Could not reach the add-on. Check that it is running and that the URL is right."
+      "cannot_connect": "Could not connect / register with the processor. Check host, port, TLS, and that the IPID is defined and free in the program.",
+      "invalid_ipid": "IPID must be between 1 and 254 (0x01-0xFE).",
+      "bad_project": "Could not read a join map from that file. Give a path to a .c3p or a panel .zip that contains swf/Environment.xml."
     },
     "abort": {
-      "already_configured": "This add-on is already set up."
+      "already_configured": "This host + IPID is already configured."
     }
   }
 }
