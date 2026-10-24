@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.15.1 — 2026-10-25
+
+- **Fix**: Setup failed on every processor with "Platform
+  crestron_cip.binary_sensor not found". `DeviceInfo` was imported from
+  `homeassistant.helpers.device_info`, which does not exist; it lives in
+  `homeassistant.helpers.device_registry`. The tests run without Home
+  Assistant, so they could not catch it.
+- **Fix**: A setup that failed after connecting left the connection
+  registered at the processor, heartbeating with nothing reading it,
+  because Home Assistant never unloads a failed entry. It is now closed.
+
 ## 0.15.0 — 2026-10-23
 
 **Breaking: the add-on is gone.** The repository is now a single custom

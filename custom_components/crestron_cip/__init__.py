@@ -39,7 +39,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(f"Cannot connect to {hub.host}: {exc}") from exc
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = hub
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except Exception:
+        # A failed setup is never unloaded, so without this the connection
+        # stays registered at the processor with nothing reading it.
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+        await hub.async_stop()
+        raise
     _register_services(hass)
     entry.async_on_unload(entry.add_update_listener(_reload))
     return True
