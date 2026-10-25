@@ -27,6 +27,7 @@ from homeassistant.core import HomeAssistant, callback
 
 from . import protocol as p
 from .const import CONF_IPID, CONF_SSL, DEFAULT_PORT, DEFAULT_TLS_PORT, DOMAIN
+from .panel_store import OPT_PANEL_URL, OPT_XPANEL_URL
 from .xpanel_mux import PANEL_SILENCE_S, PanelLink
 
 _LOGGER = logging.getLogger(__name__)
@@ -212,6 +213,10 @@ def ws_xpanel_info(hass: HomeAssistant, connection: websocket_api.ActiveConnecti
         "port": entry.data.get(CONF_PORT) or (DEFAULT_TLS_PORT if use_ssl else DEFAULT_PORT),
         "ipid": int(entry.data[CONF_IPID]),
         "relay": RELAY_URL.format(entry_id=entry.entry_id),
+        # The panel imported for this processor in its options, if any.
+        "xpanel_url": entry.options.get(OPT_XPANEL_URL),
+        "panel_url": entry.options.get(OPT_PANEL_URL),
+        "name": entry.data.get("name") or entry.title,
     })
 
 

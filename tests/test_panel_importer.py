@@ -240,3 +240,32 @@ def test_a_new_import_gets_a_new_url():
     b = importer.export_xpanel(xpanel_zip({"swf/container.swf": b"CWS2"}),
                                Path(tempfile.mkdtemp()), "/u")
     assert a != b
+
+
+def test_a_panel_given_in_the_ui_is_imported_and_kept():
+    """What Configure does with an uploaded panel file."""
+    from crestron_cip import panel_store
+
+    config = Path(tempfile.mkdtemp())
+
+    class Config:
+        config_dir = str(config)
+
+        def path(self, *parts):
+            return str(config.joinpath(*parts))
+
+    class Hass:
+        pass
+
+    hass = Hass()
+    hass.config = Config()
+    upload = Path(tempfile.mkdtemp()) / "upload.zip"
+    upload.write_bytes(project(page("Main", 13, button("Go", 6)),
+                               files={"swf/container.swf": b"CWS"}))
+    options = panel_store.import_from_file(hass, upload, "Tower Room")
+    assert options["panel_url"] == "/local/crestron-panels/Tower_Room/panel.json"
+    assert options["xpanel_url"].startswith("/local/crestron-panels/Tower_Room/xpanel/container.swf?v=")
+    assert (config / "www" / "crestron-panels" / "Tower_Room" / "panel.json").is_file()
+    # The file itself is kept, so it can be imported again later.
+    kept = Path(options["panel_source"])
+    assert kept == config / "crestron_cip" / "Tower_Room.zip" and kept.is_file()

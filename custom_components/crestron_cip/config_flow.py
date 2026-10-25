@@ -3,19 +3,29 @@ from __future__ import annotations
 
 from typing import Any
 
-import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
-from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
-import homeassistant.helpers.config_validation as cv
-
 import os
+from pathlib import Path
+
+import voluptuous as vol
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
+from homeassistant.core import HomeAssistant, callback
+import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.selector import FileSelector, FileSelectorConfig, TextSelector
 
 from .client import CIPClient
 from .const import (
     CONF_IPID, CONF_PROJECT_FILE, CONF_SSL, DEFAULT_NAME, DEFAULT_PORT,
     DEFAULT_TLS_PORT, DOMAIN,
 )
+from .panel_store import OPT_PANEL_NAME, import_from_file
 from .project_loader import load_project
+
+# The options form: the panel as an upload, or a file already on the box.
+PANEL_UPLOAD = "panel_file"
+PANEL_PATH = "panel_path"
+PANEL_ACCEPT = ".zip,.c3p"
+ALLOWED_ROOTS = ("/share", "/media")
 
 
 def _validate_project(path: str) -> bool:
@@ -37,8 +47,73 @@ async def _try_connect(host: str, ipid: int, port: int | None, use_ssl: bool) ->
     return None
 
 
+async def _import_panel(hass: HomeAssistant, name: str, upload: str | None,
+                        path: str | None) -> tuple[dict[str, Any] | None, str | None]:
+    """Import the panel the form was given: (options, None) or (None, error key)."""
+    from homeassistant.components.file_upload import process_uploaded_file
+
+    from .panel.importer import PanelImportError
+
+    def run() -> dict[str, Any]:
+        if upload:
+            with process_uploaded_file(hass, upload) as file_path:
+                # The upload is deleted when this block ends; import_from_file
+                # keeps its own copy.
+                return import_from_file(hass, Path(file_path), name)
+        return import_from_file(hass, Path(path), name)
+
+    if path and not upload:
+        resolved = Path(path).expanduser().resolve()
+        roots = [Path(hass.config.config_dir), *map(Path, ALLOWED_ROOTS)]
+        if not any(resolved.is_relative_to(root) for root in roots):
+            return None, "panel_outside"
+        if not resolved.is_file():
+            return None, "panel_missing"
+    try:
+        return await hass.async_add_executor_job(run), None
+    except PanelImportError:
+        return None, "panel_unreadable"
+    except (OSError, ValueError):
+        return None, "panel_missing"
+
+
+class CrestronCipOptionsFlow(OptionsFlow):
+    """Configure: give the processor its panel, as a file."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        entry = self.config_entry
+        current = entry.options.get(OPT_PANEL_NAME)
+        if user_input is not None:
+            upload = user_input.get(PANEL_UPLOAD)
+            path = (user_input.get(PANEL_PATH) or "").strip() or None
+            if not upload and not path:
+                # Nothing new: keep the panel there is.
+                return self.async_create_entry(data=dict(entry.options))
+            name = entry.data.get(CONF_NAME) or entry.title
+            options, error = await _import_panel(self.hass, name, upload, path)
+            if error:
+                errors["base"] = error
+            else:
+                options.pop("screens", None)
+                return self.async_create_entry(data={**entry.options, **options})
+
+        schema = vol.Schema({
+            vol.Optional(PANEL_UPLOAD): FileSelector(FileSelectorConfig(accept=PANEL_ACCEPT)),
+            vol.Optional(PANEL_PATH): TextSelector(),
+        })
+        return self.async_show_form(
+            step_id="init", data_schema=schema, errors=errors,
+            description_placeholders={"current": current or "none yet"})
+
+
 class CrestronCipConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> CrestronCipOptionsFlow:
+        return CrestronCipOptionsFlow()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}

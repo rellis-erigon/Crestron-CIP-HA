@@ -17,10 +17,30 @@
     "error": {
       "cannot_connect": "Could not connect / register with the processor. Check host, port, TLS, and that the IPID is defined and free in the program.",
       "invalid_ipid": "IPID must be between 1 and 254 (0x01-0xFE).",
-      "bad_project": "Could not read a join map from that file. Give a path to a .c3p or a panel .zip that contains swf/Environment.xml."
+      "bad_project": "Could not read a join map from that file. Give a path to a .c3p or a panel .zip that contains swf/Environment.xml.",
+      "panel_outside": "That path is outside the config, share and media folders.",
+      "panel_missing": "No file at that path.",
+      "panel_unreadable": "That file is not a panel project this can draw: no control in it binds a join."
     },
     "abort": {
       "already_configured": "This host + IPID is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Panel",
+        "description": "Give this processor its touch panel: the panel's own .zip (or .c3p) from VTPro-e. It is imported for the Crestron XPanel card, which then needs only this processor's device. Current panel: {current}.",
+        "data": {
+          "panel_file": "Panel file (upload)",
+          "panel_path": "Or a path to a file already on Home Assistant (/share, /media or the config folder)"
+        }
+      }
+    },
+    "error": {
+      "panel_outside": "That path is outside the config, share and media folders.",
+      "panel_missing": "No file at that path.",
+      "panel_unreadable": "That file is not a panel project this can draw: no control in it binds a join."
     }
   }
 }

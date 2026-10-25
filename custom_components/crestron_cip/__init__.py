@@ -61,7 +61,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         websocket_api.async_register_command(hass, ws_xpanel_info)
         websocket_api.async_register_command(hass, ws_xpanel_log)
         hass.data[f"{DOMAIN}_views"] = True
-    entry.async_on_unload(entry.add_update_listener(_reload))
     return True
 
 
@@ -75,10 +74,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     SERVICE_SET_SERIAL, SERVICE_REQUEST_UPDATE, SERVICE_IMPORT_PANEL):
             hass.services.async_remove(DOMAIN, svc)
     return ok
-
-
-async def _reload(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    await hass.config_entries.async_reload(entry.entry_id)
 
 
 def _register_services(hass: HomeAssistant) -> None:

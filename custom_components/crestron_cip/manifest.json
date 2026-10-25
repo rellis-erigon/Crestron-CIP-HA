@@ -6,6 +6,7 @@
   ],
   "config_flow": true,
   "dependencies": [
+    "file_upload",
     "http",
     "websocket_api"
   ],
@@ -14,5 +15,5 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/rellis-erigon/Crestron-CIP-HA/issues",
   "requirements": [],
-  "version": "0.20.0"
+  "version": "0.21.0"
 }

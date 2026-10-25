@@ -90,6 +90,16 @@ ramps run as they do on the wall.
 
 ## Running the panel's own XPanel
 
+The short way, all in Home Assistant:
+
+1. **Settings → Devices & services → Crestron CIP → (the processor) →
+   Configure.** Upload the panel's `.zip` (or give a path under `/share`).
+   It is imported, made ready for the browser, and kept with the
+   configuration.
+2. **Dashboard → Add card → Crestron XPanel Card**, and pick the processor.
+
+The rest of this section is what that does, and the manual route.
+
 A panel's `.zip` also carries Crestron's compiled browser XPanel
 (`container.swf`, the SmartGraphics engine and its theme). `import_panel`
 unpacks it beside the panel and returns its `xpanel_url`.
