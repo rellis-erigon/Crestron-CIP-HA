@@ -172,6 +172,34 @@ def _scan_cresnet(payload: bytes, start: int) -> list[tuple[int, bytes]] | None:
     return out if i == end and out else None
 
 
+# EXTENDED_DATA (0x12) carries the same records with a longer header:
+# two zero bytes, then the 16-bit length, as a live DMPS sent one IPID's
+# joins (`00 00 00 12 34 ...`, an extended serial) while another IPID on
+# the same processor got plain DATA.
+EXTENDED_PREFIX = b"\x00\x00"
+
+
+def pack_cresnet_extended(cresnet_type: int, records: bytes) -> bytes:
+    n = len(records) + 1
+    return EXTENDED_PREFIX + bytes(((n >> 8) & 0xFF, n & 0xFF, cresnet_type)) + records
+
+
+def pack_record(cresnet_type: int, records: bytes, extended: bool = False) -> bytes:
+    """A record framed for DATA, or for EXTENDED_DATA."""
+    pack = pack_cresnet_extended if extended else pack_cresnet
+    return pack(cresnet_type, records)
+
+
+def iter_records(payload: bytes, extended: bool = False):
+    """Records from a DATA or an EXTENDED_DATA payload."""
+    if extended:
+        recs = _scan_cresnet(payload, len(EXTENDED_PREFIX))
+        if recs is not None:
+            yield from recs
+            return
+    yield from iter_cresnet_records(payload)
+
+
 def iter_cresnet_records(payload: bytes):
     """Yield (cresnet_type, record_bytes) from a DATA payload.
 

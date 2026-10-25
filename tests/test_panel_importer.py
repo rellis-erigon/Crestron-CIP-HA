@@ -100,9 +100,9 @@ def test_write_panel_puts_the_panel_and_its_artwork_where_a_card_can_load_them()
     data = project(page("Main", 13, button("Go", 6, art)),
                    files={"Images/Key.png": b"\x89PNG fake"})
     root = Path(tempfile.mkdtemp())
-    result = importer.write_panel(data, "Orchard Room", root, "/local/crestron-panels")
-    assert result["panel_url"] == "/local/crestron-panels/Orchard_Room/panel.json"
-    saved = json.loads((root / "Orchard_Room" / "panel.json").read_text())
+    result = importer.write_panel(data, "Meeting Room", root, "/local/crestron-panels")
+    assert result["panel_url"] == "/local/crestron-panels/Meeting_Room/panel.json"
+    saved = json.loads((root / "Meeting_Room" / "panel.json").read_text())
     assert saved["format"] == "crestron-panel"
     assert saved["page_joins"] == {"Main": 13}
 
@@ -262,13 +262,13 @@ def test_a_panel_given_in_the_ui_is_imported_and_kept():
     upload = Path(tempfile.mkdtemp()) / "upload.zip"
     upload.write_bytes(project(page("Main", 13, button("Go", 6)),
                                files={"swf/container.swf": b"CWS"}))
-    options = panel_store.import_from_file(hass, upload, "Tower Room")
-    assert options["panel_url"] == "/local/crestron-panels/Tower_Room/panel.json"
-    assert options["xpanel_url"].startswith("/local/crestron-panels/Tower_Room/xpanel/container.swf?v=")
-    assert (config / "www" / "crestron-panels" / "Tower_Room" / "panel.json").is_file()
+    options = panel_store.import_from_file(hass, upload, "Board Room")
+    assert options["panel_url"] == "/local/crestron-panels/Board_Room/panel.json"
+    assert options["xpanel_url"].startswith("/local/crestron-panels/Board_Room/xpanel/container.swf?v=")
+    assert (config / "www" / "crestron-panels" / "Board_Room" / "panel.json").is_file()
     # The file itself is kept, so it can be imported again later.
     kept = Path(options["panel_source"])
-    assert kept == config / "crestron_cip" / "Tower_Room.zip" and kept.is_file()
+    assert kept == config / "crestron_cip" / "Board_Room.zip" and kept.is_file()
 
 
 def test_a_processor_keeps_one_panel_per_room():

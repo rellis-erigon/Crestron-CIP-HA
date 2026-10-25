@@ -67,7 +67,8 @@ class CIPClient:
         # xpanel_mux is given as its own; and who else wants each DATA
         # payload as it came.
         self.connect_response: bytes = b""
-        self.data_listeners: list[Callable[[bytes], None]] = []
+        # Each is called with (payload, packet type): DATA or EXTENDED_DATA.
+        self.data_listeners: list[Callable[[bytes, int], None]] = []
 
         # ring buffer of recent inbound frames (type, hex) for empirical capture
         self.raw_frames: list[tuple[int, str]] = []
@@ -212,9 +213,9 @@ class CIPClient:
                    else p.pack_cresnet(cresnet_type, record))
         await self._send(p.PacketType.DATA, payload)
 
-    async def send_data(self, payload: bytes) -> None:
-        """Send a DATA payload as it is: a panel's joins, passed through."""
-        await self._send(p.PacketType.DATA, payload)
+    async def send_data(self, payload: bytes, ptype: int = p.PacketType.DATA) -> None:
+        """Send a DATA (or EXTENDED_DATA) payload as it is: a panel's joins, passed through."""
+        await self._send(ptype, payload)
 
     async def request_update(self) -> None:
         """Ask the processor to (re)send the current state of all joins."""
@@ -252,7 +253,7 @@ class CIPClient:
         elif ptype in (p.PacketType.DATA, p.PacketType.EXTENDED_DATA):
             for listener in self.data_listeners:
                 try:
-                    listener(payload)
+                    listener(payload, ptype)
                 except Exception as exc:  # noqa: BLE001
                     _LOG.debug("DATA listener failed: %s", exc)
             self._parse_data(payload)

@@ -55,8 +55,11 @@ class StateImage:
     """The processor's side of the conversation, reduced to what is current.
 
     Keyed by (smart object, kind, join); each value is the records that set
-    it, as (cresnet type, bytes). A serial can arrive in pieces, so it is a
-    list; everything else is one record.
+    it, as (cresnet type, bytes, extended). A serial can arrive in pieces,
+    so it is a list; everything else is one record. `extended` is whether
+    the processor sent it as EXTENDED_DATA, which is how it is replayed: a
+    processor can talk to one IPID in DATA and to another in EXTENDED_DATA,
+    and the panel is given what its own IPID was given.
     """
 
     def __init__(self) -> None:
@@ -71,24 +74,29 @@ class StateImage:
     def clear(self) -> None:
         self._records.clear()
 
-    def feed(self, payload: bytes) -> None:
-        """Take in a DATA payload from the processor."""
-        for ctype, data in p.iter_cresnet_records(payload):
+    def feed(self, payload: bytes, extended: bool = False) -> None:
+        """Take in a DATA (or EXTENDED_DATA) payload from the processor."""
+        for ctype, data in p.iter_records(payload, extended):
             if ctype == C.COMMAND:
                 if data[:1] in (bytes((CMD.CLEAR_ALL,)),):
                     self.clear()
                 continue
-            self._take(ctype, data, None)
+            if extended and ctype in _SMART:
+                # How an extended SmartObject frames its items has not been
+                # seen yet, so the record is kept whole rather than guessed at.
+                self._records[(b"", "raw", data)] = [(ctype, data, True)]
+                continue
+            self._take(ctype, data, None, extended)
 
-    def _take(self, ctype: int, data: bytes, obj: bytes | None) -> None:
+    def _take(self, ctype: int, data: bytes, obj: bytes | None, extended: bool = False) -> None:
         def store(key: tuple, rtype: int, record: bytes, default: bool, append=False):
             full = (obj or b"", *key)
             if default:
                 self._records.pop(full, None)
             elif append and full in self._records:
-                self._records[full].append((rtype, record))
+                self._records[full].append((rtype, record, extended))
             else:
-                self._records[full] = [(rtype, record)]
+                self._records[full] = [(rtype, record, extended)]
 
         if ctype in _DIGITAL:
             for k in range(0, len(data) - 1, 2):
@@ -113,22 +121,23 @@ class StateImage:
                 nlen = data[i]
                 if nlen < 1:
                     break
-                self._take(data[i + 1], data[i + 2:i + 1 + nlen], inner)
+                self._take(data[i + 1], data[i + 2:i + 1 + nlen], inner, extended)
                 i += 1 + nlen
         else:
             # Date and time, and anything else: the latest one stands.
             store(("x", ctype), ctype, data, default=False)
 
-    def payloads(self) -> list[bytes]:
-        """The image as DATA payloads, one record each, ready to send."""
+    def payloads(self) -> list[tuple[int, bytes]]:
+        """The image as (packet type, payload), one record each, ready to send."""
         out = []
         for (obj, *_), records in self._records.items():
-            for rtype, record in records:
+            for rtype, record, extended in records:
+                ptype = p.PacketType.EXTENDED_DATA if extended else p.PacketType.DATA
                 if obj:
                     item = bytes((len(record) + 1, rtype)) + record
-                    out.append(p.pack_cresnet(C.SMART_OBJECT, obj + item))
+                    out.append((ptype, p.pack_record(C.SMART_OBJECT, obj + item, extended)))
                 else:
-                    out.append(p.pack_cresnet(rtype, record))
+                    out.append((ptype, p.pack_record(rtype, record, extended)))
         return out
 
 
@@ -175,14 +184,16 @@ class PanelLink:
         elif ptype == p.PacketType.DISCONNECT:
             return False
         elif ptype in (p.PacketType.DATA, p.PacketType.EXTENDED_DATA):
-            await self._data(body)
+            await self._data(body, ptype)
         return True
 
-    async def _data(self, body: bytes) -> None:
-        for ctype, data in p.iter_cresnet_records(body):
+    async def _data(self, body: bytes, ptype: int = p.PacketType.DATA) -> None:
+        extended = ptype == p.PacketType.EXTENDED_DATA
+        for ctype, data in p.iter_records(body, extended):
             if ctype != C.COMMAND:
-                # A press, a level, a text: the processor's to act on.
-                await self.mux.upstream(p.pack_cresnet(ctype, data))
+                # A press, a level, a text: the processor's to act on, in
+                # the framing the panel sent it in.
+                await self.mux.upstream(p.pack_record(ctype, data, extended), ptype)
                 continue
             sub = data[0] if data else None
             if sub == CMD.UPDATE_REQUEST:
@@ -217,14 +228,14 @@ class PanelLink:
                             p.pack_cresnet(C.DIGITAL, p.pack_digital(join, False)))
 
     async def _replay(self) -> None:
-        for payload in self.mux.image.payloads():
-            await self.send(p.PacketType.DATA, payload)
+        for ptype, payload in self.mux.image.payloads():
+            await self.send(ptype, payload)
 
 
 class XPanelMux:
     """The panels of one config entry, and the image they are served from."""
 
-    def __init__(self, upstream: Callable[[bytes], Awaitable[None]],
+    def __init__(self, upstream: Callable[..., Awaitable[None]],
                  connect_response: Callable[[], bytes]) -> None:
         self._upstream = upstream
         self._connect_response = connect_response
@@ -240,8 +251,11 @@ class XPanelMux:
         # what it would have; a live DMPS sent 00 00 00 1f.
         return self._connect_response() or b"\x00\x00\x00\x1f"
 
-    async def upstream(self, payload: bytes) -> None:
-        await self._upstream(payload)
+    async def upstream(self, payload: bytes, ptype: int = p.PacketType.DATA) -> None:
+        if ptype == p.PacketType.DATA:
+            await self._upstream(payload)
+        else:
+            await self._upstream(payload, ptype)
 
     def held_digitals(self) -> set[int]:
         """The ordinary digital joins the processor is holding high."""
@@ -252,9 +266,9 @@ class XPanelMux:
         seen = [(self._rises[j], j) for j in pages if j in self._rises]
         return max(seen)[1] if seen else None
 
-    def _note_rises(self, payload: bytes) -> None:
+    def _note_rises(self, payload: bytes, extended: bool = False) -> None:
         held = self.held_digitals()
-        for ctype, data in p.iter_cresnet_records(payload):
+        for ctype, data in p.iter_records(payload, extended):
             if ctype not in _DIGITAL:
                 continue
             for k in range(0, len(data) - 1, 2):
@@ -263,25 +277,27 @@ class XPanelMux:
                     self._rise_count += 1
                     self._rises[join] = self._rise_count
 
-    def from_processor(self, payload: bytes) -> None:
-        """A DATA payload the processor sent: remember it, pass it on."""
-        self._note_rises(payload)
-        self.image.feed(payload)
-        records = list(p.iter_cresnet_records(payload))
+    def from_processor(self, payload: bytes, ptype: int = p.PacketType.DATA) -> None:
+        """A DATA or EXTENDED_DATA payload the processor sent: remember it, pass it on."""
+        extended = ptype == p.PacketType.EXTENDED_DATA
+        self._note_rises(payload, extended)
+        self.image.feed(payload, extended)
+        records = list(p.iter_records(payload, extended))
         if not any(ctype == C.COMMAND for ctype, _ in records):
             out = [payload]  # as the processor framed it
         else:
             # Its update markers answer our own request, not a panel's.
-            out = [p.pack_cresnet(ctype, data) for ctype, data in records
+            out = [p.pack_record(ctype, data, extended) for ctype, data in records
                    if ctype != C.COMMAND]
         for link in list(self.links):
             if link.ready:
                 for body in out:
-                    asyncio.ensure_future(self._safe_send(link, body))
+                    asyncio.ensure_future(self._safe_send(link, body, ptype))
 
-    async def _safe_send(self, link: PanelLink, payload: bytes) -> None:
+    async def _safe_send(self, link: PanelLink, payload: bytes,
+                         ptype: int = p.PacketType.DATA) -> None:
         try:
-            await link.send(p.PacketType.DATA, payload)
+            await link.send(ptype, payload)
         except Exception as err:  # noqa: BLE001
             _LOG.debug("XPanel %s did not take an update: %s", link.name, err)
 

@@ -107,8 +107,7 @@ async def a_join_back_at_its_default_is_not_replayed() -> None:
     mux.from_processor(data(C.DIGITAL, p.pack_digital(31, False)))
     mux.from_processor(data(C.ANALOG, p.pack_analog(211, 0)))
     mux.from_processor(serial(1000, ""))
-    payloads = mux.image.payloads()
-    got = joins([(p.PacketType.DATA, b) for b in payloads])
+    got = joins(mux.image.payloads())
     assert not any(j[1] in (31, 211, 1000) and j[3] == 0 for j in got), got
     assert ("digital", 7, True, 0) in got
 
@@ -162,11 +161,11 @@ async def a_serial_in_pieces_is_replayed_whole() -> None:
     image = StateImage()
     image.feed(serial(5, "Hello ", fmt=0x01))
     image.feed(serial(5, "world", fmt=0x02))
-    texts = [rec[3:] for body in image.payloads()
+    texts = [rec[3:] for _, body in image.payloads()
              for _, rec in p.iter_cresnet_records(body)]
     assert texts == [b"Hello ", b"world"], texts
     image.feed(serial(5, "New", fmt=0x03))
-    texts = [rec[3:] for body in image.payloads()
+    texts = [rec[3:] for _, body in image.payloads()
              for _, rec in p.iter_cresnet_records(body)]
     assert texts == [b"New"], texts
 
@@ -193,6 +192,36 @@ async def a_new_panel_is_flipped_to_the_last_page() -> None:
     assert rec2.frames[-1][1] == data(C.COMMAND, b"\x1c")
 
 
+async def an_ipid_sent_extended_data_is_served_extended_data() -> None:
+    """One IPID's joins came as EXTENDED_DATA, `00 00 <len16> <type> ...`.
+
+    Read off a live DMPS: its second panel IPID got its serials that way
+    while the first got plain DATA. The panel is given them as they came,
+    in the replay and as they change.
+    """
+    room = bytes.fromhex("0000000e34000003") + b"Room Two!!"
+    assert list(p.iter_records(room, True)) == [(0x34, bytes.fromhex("000003") + b"Room Two!!")]
+    assert p.pack_record(0x34, bytes.fromhex("000003") + b"Room Two!!", True) == room
+
+    async def up(*args):
+        pass
+
+    mux = XPanelMux(up, lambda: bytes.fromhex("0000001f"))
+    mux.from_processor(room, p.PacketType.EXTENDED_DATA)
+    mux.from_processor(data(C.DIGITAL, p.pack_digital(7, True)))
+    rec = Recorder()
+    link = PanelLink(mux, rec.send, "t")
+    mux.links.add(link)
+    await link.feed(p.frame(p.PacketType.DATA, data(C.COMMAND, b"\x00")))
+    assert (p.PacketType.EXTENDED_DATA, room) in rec.frames, rec.frames
+    assert (p.PacketType.DATA, data(C.DIGITAL, p.pack_digital(7, True))) in rec.frames
+    before = len(rec.frames)
+    change = bytes.fromhex("0000000a3400d203536f75726365")
+    mux.from_processor(change, p.PacketType.EXTENDED_DATA)
+    await asyncio.sleep(0)
+    assert rec.frames[before:] == [(p.PacketType.EXTENDED_DATA, change)], rec.frames[before:]
+
+
 async def main() -> None:
     tests = [a_panel_is_answered_as_the_processor_answered,
              a_join_back_at_its_default_is_not_replayed,
@@ -200,7 +229,8 @@ async def main() -> None:
              feedback_reaches_every_ready_panel,
              losing_the_processor_closes_the_panels,
              a_serial_in_pieces_is_replayed_whole,
-             a_new_panel_is_flipped_to_the_last_page]
+             a_new_panel_is_flipped_to_the_last_page,
+             an_ipid_sent_extended_data_is_served_extended_data]
     for t in tests:
         await t()
         print(f"  ok  {t.__name__}")

@@ -83,13 +83,13 @@ import_panel:
       name: Path
       description: The project file, under the config, share or media folder.
       required: true
-      example: /share/Orchard1-TP.zip
+      example: /share/Meeting1-TP.zip
       selector:
         text: {}
     name:
       name: Name
       description: What to call the panel. Defaults to the file name.
       required: false
-      example: Orchard Room 1
+      example: Meeting Room 1
       selector:
         text: {}
