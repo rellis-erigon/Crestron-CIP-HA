@@ -42,7 +42,7 @@ def ensure_panel_key(hass: HomeAssistant, entry) -> str:
         hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_XPANEL_KEY: key})
     return key
 from .panel_store import OPT_PANEL_URL, OPT_XPANEL_URL, find_panel, panels_of
-from .xpanel_mux import PANEL_SILENCE_S, PanelLink
+from .xpanel_mux import PANEL_PING_S, PanelLink
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ class XPanelRelayView(HomeAssistantView):
             # The engine retries by itself; by then the processor may be back.
             return web.Response(status=503, text=f"{title} is not connected")
         mux = link_to[1]
-        ws = web.WebSocketResponse(max_msg_size=0, heartbeat=None)
+        ws = web.WebSocketResponse(max_msg_size=0, heartbeat=PANEL_PING_S)
         await ws.prepare(request)
         tap = _Tap(title)
         count = len(mux.links) + 1
@@ -151,11 +151,7 @@ class XPanelRelayView(HomeAssistantView):
         try:
             await link.start()
             while True:
-                try:
-                    msg = await ws.receive(timeout=PANEL_SILENCE_S)
-                except asyncio.TimeoutError:
-                    _LOGGER.info("XPanel %s went silent", link.name)
-                    break
+                msg = await ws.receive()
                 if msg.type != WSMsgType.BINARY:
                     break
                 tap.feed("panel->processor", msg.data)

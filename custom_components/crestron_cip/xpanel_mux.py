@@ -36,8 +36,13 @@ CMD = p.CommandSubtype
 PROGRAM_READY_BODY = b"\x02"
 # And what it answered a heartbeat with.
 HEARTBEAT_REPLY_BODY = b"\x00\x00"
-# A panel that has said nothing for this long is gone (it heartbeats every 15 s).
-PANEL_SILENCE_S = 60.0
+# How a panel is known to be gone. Not by its own heartbeats: a browser
+# stops running the panel in a window that is not showing (Ruffle draws on
+# animation frames, which a hidden page does not get), so a panel left in
+# another browser falls silent while still wanted. The websocket is pinged
+# instead, which a browser answers whether or not the page is showing, and
+# a panel whose browser has really gone stops answering.
+PANEL_PING_S = 30.0
 # How long a replayed page pulse is held.
 PAGE_PULSE_S = 0.1
 

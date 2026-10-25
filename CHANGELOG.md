@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.22.2 — 2026-10-26
+
+- **Fixed**: a panel left open in another browser, or behind another
+  window, was closed after a minute and loaded again from scratch when
+  shown. A browser stops running the XPanel engine in a page that is not
+  showing, so its heartbeats stop, and the relay took that silence as the
+  panel having gone. The relay now pings the websocket instead, which the
+  browser answers while the page is hidden; only a panel whose browser has
+  really gone is closed.
+
 ## 0.22.1 — 2026-10-26
 
 - **Fixed**: a panel at an IPID the processor talks to in EXTENDED_DATA
