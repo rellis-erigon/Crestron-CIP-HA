@@ -42,8 +42,8 @@
         "data": {
           "room": "Room",
           "ipid": "IPID (hex, e.g. 04)",
-          "panel_file": "Panel file (upload)",
-          "panel_path": "Or a path to a file already on Home Assistant (/share, /media or the config folder)"
+          "panel_file": "Or upload one",
+          "panel_path": "Panel file on Home Assistant (pick from the list, or type a path under /share, /media or the config folder)"
         }
       },
       "remove_panel": {

@@ -12,7 +12,7 @@ from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
 from homeassistant.core import HomeAssistant, callback
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.selector import (
-    FileSelector, FileSelectorConfig, SelectSelector, SelectSelectorConfig, TextSelector,
+    FileSelector, FileSelectorConfig, SelectSelector, SelectSelectorConfig, SelectSelectorMode, TextSelector,
 )
 
 from .client import CIPClient
@@ -33,6 +33,42 @@ PANEL_IPID = "ipid"
 PANEL_REMOVE = "panels"
 PANEL_ACCEPT = ".zip,.c3p"
 ALLOWED_ROOTS = ("/share", "/media")
+# How far the drop-down of panel files looks, so a big share stays quick.
+FIND_DEPTH = 4
+FIND_LIMIT = 200
+
+
+def _panel_files(config_dir: str) -> list[str]:
+    """Panel files already on the box, for the form's drop-down. Executor.
+
+    The copies Configure kept come first, then whatever is on the share and
+    media folders. Hidden folders and the panels already unpacked for the
+    browser (www) are skipped.
+    """
+    found: list[str] = []
+    roots = [Path(config_dir) / DOMAIN, *map(Path, ALLOWED_ROOTS)]
+    suffixes = {s.strip() for s in PANEL_ACCEPT.split(",")}
+
+    def walk(folder: Path, depth: int) -> None:
+        if len(found) >= FIND_LIMIT or depth > FIND_DEPTH:
+            return
+        try:
+            entries = sorted(folder.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            return
+        for path in entries:
+            if path.name.startswith(".") or path.name == "www":
+                continue
+            if path.is_dir():
+                walk(path, depth + 1)
+            elif path.suffix.lower() in suffixes and str(path) not in found:
+                found.append(str(path))
+                if len(found) >= FIND_LIMIT:
+                    return
+
+    for root in roots:
+        walk(root, 0)
+    return found
 
 
 def _validate_project(path: str) -> bool:
@@ -137,11 +173,14 @@ class CrestronCipOptionsFlow(OptionsFlow):
                         data=with_panel(dict(entry.options), int(entry.data[CONF_IPID]), panel))
 
         default_ipid = f"{int(entry.data[CONF_IPID]):02X}"
+        files = await self.hass.async_add_executor_job(_panel_files, self.hass.config.config_dir)
         schema = vol.Schema({
             vol.Required(PANEL_ROOM): TextSelector(),
             vol.Required(PANEL_IPID, default=default_ipid): TextSelector(),
+            # A file already on Home Assistant, picked from a list (or typed).
+            vol.Optional(PANEL_PATH): SelectSelector(SelectSelectorConfig(
+                options=files, custom_value=True, mode=SelectSelectorMode.DROPDOWN)),
             vol.Optional(PANEL_UPLOAD): FileSelector(FileSelectorConfig(accept=PANEL_ACCEPT)),
-            vol.Optional(PANEL_PATH): TextSelector(),
         })
         if user_input is not None:
             schema = self.add_suggested_values_to_schema(
