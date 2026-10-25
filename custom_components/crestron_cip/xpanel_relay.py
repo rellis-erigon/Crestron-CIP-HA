@@ -14,7 +14,9 @@ a registration of its own; that is kept to compare the two.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
+import secrets
 import ssl
 
 from aiohttp import WSMsgType, web
@@ -27,6 +29,18 @@ from homeassistant.core import HomeAssistant, callback
 
 from . import protocol as p
 from .const import CONF_IPID, CONF_SSL, DEFAULT_PORT, DEFAULT_TLS_PORT, DOMAIN
+
+# The entry's key for its panels' websocket.
+CONF_XPANEL_KEY = "xpanel_key"
+
+
+def ensure_panel_key(hass: HomeAssistant, entry) -> str:
+    """The entry's panel key, made once and kept with the entry."""
+    key = entry.data.get(CONF_XPANEL_KEY)
+    if not key:
+        key = secrets.token_urlsafe(32)
+        hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_XPANEL_KEY: key})
+    return key
 from .panel_store import OPT_PANEL_URL, OPT_XPANEL_URL
 from .xpanel_mux import PANEL_SILENCE_S, PanelLink
 
@@ -72,9 +86,13 @@ class XPanelRelayView(HomeAssistantView):
 
     url = RELAY_URL
     name = "api:crestron_cip:xpanel"
-    # The card signs the path (auth/sign_path): a websocket opened by Flash
-    # under Ruffle cannot carry an Authorization header.
-    requires_auth = True
+    # Not Home Assistant's own auth: a panel left running must reconnect by
+    # itself after Home Assistant restarts, and a signed path dies with the
+    # run that signed it (it is signed with a per-run secret). The XPanel
+    # cannot carry a header either. So each entry has a key of its own,
+    # kept in its config entry and handed out only over the authenticated
+    # websocket (xpanel_info); the websocket here must present it.
+    requires_auth = False
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
@@ -83,6 +101,10 @@ class XPanelRelayView(HomeAssistantView):
         entry = self.hass.config_entries.async_get_entry(entry_id)
         if entry is None or entry.domain != DOMAIN:
             return web.Response(status=404, text="no such Crestron CIP entry")
+        expected = entry.data.get(CONF_XPANEL_KEY)
+        if not expected or not hmac.compare_digest(
+                request.query.get("key", ""), expected):
+            return web.Response(status=401, text="wrong or missing panel key")
         if "direct" in request.query:
             return await self._direct(request, entry)
         hub = self.hass.data.get(DOMAIN, {}).get(entry_id)
@@ -213,6 +235,7 @@ def ws_xpanel_info(hass: HomeAssistant, connection: websocket_api.ActiveConnecti
         "port": entry.data.get(CONF_PORT) or (DEFAULT_TLS_PORT if use_ssl else DEFAULT_PORT),
         "ipid": int(entry.data[CONF_IPID]),
         "relay": RELAY_URL.format(entry_id=entry.entry_id),
+        "key": ensure_panel_key(hass, entry),
         # The panel imported for this processor in its options, if any.
         "xpanel_url": entry.options.get(OPT_XPANEL_URL),
         "panel_url": entry.options.get(OPT_PANEL_URL),
