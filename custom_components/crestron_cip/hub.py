@@ -7,6 +7,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.util import dt as dt_util
 
 from .client import CIPClient
 from .const import SIGNAL_CONN, SIGNAL_NEW, SIGNAL_VALUE
@@ -27,6 +28,11 @@ class CrestronHub:
         self._stopping = False
         self._reconnect_task: asyncio.Task | None = None
         self._seen: set[tuple[str, int]] = set()
+        # digital join -> when it last went high. Kept here rather than on
+        # the entity because the entity for a join first seen in a pulse
+        # is created after the pulse has been released.
+        self.last_on: dict[int, str] = {}
+        self._on: dict[int, bool] = {}
         self.joinmap = None
         self._labels: dict[tuple[str, int], str] = {}
         if project_file:
@@ -96,6 +102,10 @@ class CrestronHub:
     @callback
     def _on_feedback(self, kind: str, join: int, value: object) -> None:
         key = (kind, join)
+        if kind == "digital" and value and not self._was_on(join):
+            self.last_on[join] = dt_util.utcnow().isoformat()
+        if kind == "digital":
+            self._on[join] = bool(value)
         if key not in self._seen:
             self._seen.add(key)
             async_dispatcher_send(self.hass, SIGNAL_NEW.format(entry=self.entry.entry_id), kind, join)
@@ -104,6 +114,9 @@ class CrestronHub:
             SIGNAL_VALUE.format(entry=self.entry.entry_id, kind=kind, join=join),
             value,
         )
+
+    def _was_on(self, join: int) -> bool:
+        return self._on.get(join, False)
 
     def known(self, kind: str) -> list[int]:
         return sorted(j for (k, j) in self._seen if k == kind)

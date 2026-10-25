@@ -25,8 +25,16 @@ SERVICE_SET_DIGITAL = "set_digital"
 SERVICE_SET_ANALOG = "set_analog"
 SERVICE_SET_SERIAL = "set_serial"
 SERVICE_REQUEST_UPDATE = "request_update"
+SERVICE_IMPORT_PANEL = "import_panel"
 
 ATTR_JOIN = "join"
 ATTR_VALUE = "value"
 ATTR_DURATION = "duration"
 ATTR_ENTRY_ID = "entry_id"
+ATTR_PATH = "path"
+ATTR_NAME = "name"
+
+# Where imported panels go. Home Assistant serves config/www at /local, a
+# URL any dashboard can load without a token.
+PANEL_DIR = ("www", "crestron-panels")
+PANEL_URL = "/local/crestron-panels"

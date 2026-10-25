@@ -60,3 +60,24 @@ request_update:
   description: Ask the processor to re-send the current state of all joins.
   fields:
     entry_id: { name: Config entry, required: false, selector: { config_entry: { integration: crestron_cip } } }
+
+import_panel:
+  name: Import panel
+  description: >-
+    Read a panel project (.c3p or the panel's .zip) and write every screen
+    and its artwork under www/crestron-panels, for crestron-panel-card.
+  fields:
+    path:
+      name: Path
+      description: The project file, under the config, share or media folder.
+      required: true
+      example: /share/Orchard1-TP.zip
+      selector:
+        text: {}
+    name:
+      name: Name
+      description: What to call the panel. Defaults to the file name.
+      required: false
+      example: Orchard Room 1
+      selector:
+        text: {}

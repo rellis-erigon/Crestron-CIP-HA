@@ -6,13 +6,16 @@ import logging
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
-from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ConfigEntryNotReady
+from pathlib import Path
+
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 import homeassistant.helpers.config_validation as cv
 
 from .const import (
-    ATTR_DURATION, ATTR_ENTRY_ID, ATTR_JOIN, ATTR_VALUE, CONF_IPID, CONF_PROJECT_FILE,
-    CONF_SSL, DEFAULT_PORT, DEFAULT_TLS_PORT, DOMAIN, PLATFORMS, SERVICE_PRESS,
+    ATTR_DURATION, ATTR_ENTRY_ID, ATTR_JOIN, ATTR_NAME, ATTR_PATH, ATTR_VALUE,
+    CONF_IPID, CONF_PROJECT_FILE, CONF_SSL, DEFAULT_PORT, DEFAULT_TLS_PORT, DOMAIN,
+    PANEL_DIR, PANEL_URL, PLATFORMS, SERVICE_IMPORT_PANEL, SERVICE_PRESS,
     SERVICE_REQUEST_UPDATE, SERVICE_SET_ANALOG, SERVICE_SET_DIGITAL, SERVICE_SET_SERIAL,
 )
 from .hub import CrestronHub
@@ -59,7 +62,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await hub.async_stop()
     if not hass.data.get(DOMAIN):
         for svc in (SERVICE_PRESS, SERVICE_SET_DIGITAL, SERVICE_SET_ANALOG,
-                    SERVICE_SET_SERIAL, SERVICE_REQUEST_UPDATE):
+                    SERVICE_SET_SERIAL, SERVICE_REQUEST_UPDATE, SERVICE_IMPORT_PANEL):
             hass.services.async_remove(DOMAIN, svc)
     return ok
 
@@ -99,6 +102,32 @@ def _register_services(hass: HomeAssistant) -> None:
         for h in _hubs(call):
             await h.client.request_update()
 
+    async def import_panel(call: ServiceCall) -> ServiceResponse:
+        from .panel.importer import PanelImportError, write_panel
+
+        path = Path(call.data[ATTR_PATH]).expanduser()
+        # Files the user can put on the box: the config folder, or the
+        # share and media folders on Home Assistant OS.
+        allowed = [Path(hass.config.config_dir), Path("/share"), Path("/media")]
+        resolved = path.resolve()
+        if not any(resolved.is_relative_to(root) for root in allowed):
+            raise ServiceValidationError(
+                f"{path} is outside the config, share and media folders")
+        if not resolved.is_file():
+            raise ServiceValidationError(f"{path} does not exist")
+        name = call.data.get(ATTR_NAME) or resolved.stem
+
+        def run() -> dict:
+            return write_panel(resolved.read_bytes(), name,
+                               Path(hass.config.path(*PANEL_DIR)), PANEL_URL)
+
+        try:
+            result = await hass.async_add_executor_job(run)
+        except PanelImportError as err:
+            raise ServiceValidationError(f"{path.name}: {err}") from err
+        _LOGGER.info("Imported panel %s: %d screens", name, len(result["screens"]))
+        return result
+
     base = {vol.Optional(ATTR_ENTRY_ID): cv.string}
     hass.services.async_register(DOMAIN, SERVICE_PRESS, press,
         vol.Schema({**base, vol.Required(ATTR_JOIN): cv.positive_int, vol.Optional(ATTR_DURATION): cv.positive_float}))
@@ -109,3 +138,7 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_SET_SERIAL, set_serial,
         vol.Schema({**base, vol.Required(ATTR_JOIN): cv.positive_int, vol.Required(ATTR_VALUE): cv.string}))
     hass.services.async_register(DOMAIN, SERVICE_REQUEST_UPDATE, request_update, vol.Schema(base))
+    hass.services.async_register(
+        DOMAIN, SERVICE_IMPORT_PANEL, import_panel,
+        vol.Schema({vol.Required(ATTR_PATH): cv.string, vol.Optional(ATTR_NAME): cv.string}),
+        supports_response=SupportsResponse.OPTIONAL)

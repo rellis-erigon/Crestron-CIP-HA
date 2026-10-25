@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN, SIGNAL_CONN, SIGNAL_NEW
 from .entity import CrestronJoinEntity
@@ -54,9 +55,34 @@ class CrestronConnectivity(BinarySensorEntity):
         ))
 
 
-class CrestronDigital(CrestronJoinEntity, BinarySensorEntity):
+class CrestronDigital(CrestronJoinEntity, BinarySensorEntity, RestoreEntity):
+    """A digital join, with when it last went high.
+
+    A processor pulses a page's join to flip a panel to it, so by the time
+    anybody looks the join is off again. When it last turned on is the
+    only record of which page is showing, and it survives a restart.
+    """
+
     _kind = "digital"
+    _last_on: str | None = None
 
     @property
     def is_on(self) -> bool | None:
         return self._hub.client.digital.get(self._join)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        attrs = super().extra_state_attributes
+        # The hub's record is this session's; the restored one is from
+        # before a restart. ISO timestamps in UTC sort as strings.
+        last_on = max(filter(None, (self._hub.last_on.get(self._join), self._last_on)),
+                      default=None)
+        if last_on:
+            attrs["last_on"] = last_on
+        return attrs
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None:
+            self._last_on = last.attributes.get("last_on")

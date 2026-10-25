@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.17.0 — 2026-10-25
+
+- **New**: `crestron_cip.import_panel` reads a panel project (.c3p or the
+  panel's .zip) and writes every screen, the join that shows each, and the
+  panel's artwork under `www/crestron-panels/<name>/`. crestron-panel-card
+  loads it with `panel_url`. The reader and faceplate builder come from
+  the 0.14.3 add-on, with their tests.
+- Digital joins carry `last_on`, when they last went high, kept across
+  restarts. A processor flips a panel by pulsing the page's join, so the
+  join is off again almost at once; this is the only record of which page
+  is showing.
+
 ## 0.16.0 — 2026-10-25
 
 - Every join entity carries a `join` attribute (`d101`, `a211`, `s1`).

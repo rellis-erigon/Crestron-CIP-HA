@@ -39,7 +39,7 @@ if "pytest" not in sys.modules:
         sys.modules["pytest"] = shim
 
 passed = failed = 0
-for name in sys.argv[1:] or ["test_panel_reader", "test_panel_faceplate"]:
+for name in sys.argv[1:] or ["test_panel_reader", "test_panel_faceplate", "test_panel_importer"]:
     module = importlib.import_module(name)
     for test in [v for k, v in vars(module).items() if k.startswith("test_") and callable(v)]:
         try:

@@ -388,6 +388,11 @@ def read_panel(data: bytes) -> dict:
                     # which is the one thing that stops it reading as the
                     # same screen.
                     "background": _colour(own.get("BackgroundColor")),
+                    # The join that puts this page on screen. The processor
+                    # pulses it, so it is off again by the time anybody
+                    # asks: nothing reports which page is showing, only
+                    # which one was flipped to last.
+                    "join": _as_int(own.get("DigitalJoin")) or None,
                     "opaque": (own.get("DisplayBackgroundColor") or "").strip().lower()
                     == "true",
                     "order": len(page_meta),

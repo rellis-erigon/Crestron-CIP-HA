@@ -62,11 +62,31 @@ the join the panel itself would: the panel's volume up presses the
 program's volume-up join and lets the program ramp, rather than writing a
 level.
 
+Import the panel's own project once:
+
+```yaml
+action: crestron_cip.import_panel
+data:
+  path: /share/Room-TP.zip          # .c3p or the panel's .zip
+  name: Room
+```
+
+It writes every screen and the panel's images under
+`www/crestron-panels/Room/`, and returns the `panel_url`. Then:
+
 ```yaml
 type: custom:crestron-panel-card
-device: Function Room 1 & 2      # the processor's device name
-panel: <faceplate generated from the panel project>
+device: Room Processor           # the processor's device name
+panel_url: /local/crestron-panels/Room/panel.json
+default_screen: 2.0-Start        # optional: until the processor flips a page
+scale: 2                         # optional
 ```
+
+The card shows the screen the processor flipped to last. A processor
+pulses a page's join, so until it flips one in front of Home Assistant the
+card shows `default_screen`, or the busiest screen, with tabs to choose.
+Buttons are held for as long as they are pressed, so the program's volume
+ramps run as they do on the wall.
 
 ## Actions
 
