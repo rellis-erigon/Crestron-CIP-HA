@@ -50,6 +50,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         await hub.async_stop()
         raise
+    await _sync_panels(hass, entry)
+    # Adding or removing a room's panel starts or ends its registration
+    # and its device; the processor's own connection is left alone.
+    entry.async_on_unload(entry.add_update_listener(_sync_panels))
     _register_services(hass)
     if not hass.data.setdefault(f"{DOMAIN}_views", False):
         # A view cannot be removed again, so it is registered once and looks
@@ -62,6 +66,68 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         websocket_api.async_register_command(hass, ws_xpanel_log)
         hass.data[f"{DOMAIN}_views"] = True
     return True
+
+
+def _panel_device_name(processor: str, room: str) -> str:
+    """A panel's device name: the room, under its processor's name.
+
+    A panel named for its processor (an entry's one panel, from before
+    rooms) is not named twice.
+    """
+    processor, room = processor.strip(), room.strip()
+    if room.lower().startswith(processor.lower()):
+        return f"{room} panel"
+    return f"{processor} {room}"
+
+
+async def _sync_panels(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """A device for each room's panel, and a registration at each one's IPID."""
+    from homeassistant.helpers import device_registry as dr
+
+    from .panel_store import panels_of
+    from .xpanel_relay import panel_device_identifier
+
+    hub: CrestronHub | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if hub is None:
+        return
+    panels = panels_of(entry.options, hub.ipid)
+    await hub.async_sync_panels({int(p["ipid"]) for p in panels})
+    registry = dr.async_get(hass)
+    wanted = set()
+    for panel in panels:
+        ident = panel_device_identifier(entry.entry_id, panel["id"])
+        wanted.add(ident)
+        device = registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={ident},
+            name=_panel_device_name(hub.name, panel["name"]),
+            manufacturer="Crestron",
+            model=f"XPanel IPID 0x{int(panel['ipid']):02X}",
+            via_device=(DOMAIN, hub.unique_id),
+        )
+        name = _panel_device_name(hub.name, panel["name"])
+        if device.name != name:
+            # async_get_or_create keeps the name a device already had.
+            registry.async_update_device(device.id, name=name)
+    for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
+        ours = {i for i in device.identifiers if i[0] == DOMAIN and ":" in i[1]}
+        if ours and not ours & wanted:
+            registry.async_update_device(device.id, remove_config_entry_id=entry.entry_id)
+
+
+async def async_remove_config_entry_device(hass: HomeAssistant, entry: ConfigEntry,
+                                           device) -> bool:
+    """Deleting a room panel's device removes the panel; the processor stays."""
+    from .panel_store import without_panel
+
+    for domain, ident in device.identifiers:
+        entry_id, sep, panel_id = ident.partition(":")
+        if domain == DOMAIN and sep and entry_id == entry.entry_id:
+            hass.config_entries.async_update_entry(
+                entry, options=without_panel(dict(entry.options),
+                                             int(entry.data[CONF_IPID]), panel_id))
+            return True
+    return False
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

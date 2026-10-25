@@ -269,3 +269,40 @@ def test_a_panel_given_in_the_ui_is_imported_and_kept():
     # The file itself is kept, so it can be imported again later.
     kept = Path(options["panel_source"])
     assert kept == config / "crestron_cip" / "Tower_Room.zip" and kept.is_file()
+
+
+def test_a_processor_keeps_one_panel_per_room():
+    """Configure adds rooms' panels; each keeps the IPID it was given."""
+    from crestron_cip import panel_store as ps
+
+    imported = {"panel_url": "/p/a.json", "xpanel_url": "/p/a.swf", "panel_source": "/k/a.zip"}
+    room1 = ps.panel_record("Room 1", 3, imported)
+    room2 = ps.panel_record("Room 2", 4, {**imported, "xpanel_url": "/p/b.swf"})
+    options = ps.with_panel(ps.with_panel({}, 3, room1), 3, room2)
+    assert [(p["id"], p["ipid"]) for p in ps.panels_of(options, 3)] == [("Room_1", 3), ("Room_2", 4)]
+    assert ps.find_panel(options, 3, "Room_2")["xpanel_url"] == "/p/b.swf"
+    # No panel named: the first, as for a card from before rooms.
+    assert ps.find_panel(options, 3, None)["id"] == "Room_1"
+    # The same room again replaces its panel rather than adding a second.
+    again = ps.with_panel(options, 3, ps.panel_record("Room 1", 5, imported))
+    assert [(p["id"], p["ipid"]) for p in ps.panels_of(again, 3)] == [("Room_2", 4), ("Room_1", 5)]
+    gone = ps.without_panel(again, 3, "Room_2")
+    assert [p["id"] for p in ps.panels_of(gone, 3)] == ["Room_1"]
+    assert ps.find_panel(gone, 3, "Room_2") is None
+
+
+def test_an_entry_from_before_rooms_reads_as_one_panel():
+    """The flat keys of one panel become a list of one, at the entry's IPID."""
+    from crestron_cip import panel_store as ps
+
+    old = {"panel_name": "Function Room", "panel_url": "/p/f.json",
+           "xpanel_url": "/p/f.swf", "panel_source": "/k/f.zip"}
+    [panel] = ps.panels_of(old, 3)
+    assert (panel["id"], panel["name"], panel["ipid"], panel["xpanel_url"]) == \
+        ("Function_Room", "Function Room", 3, "/p/f.swf")
+    assert ps.panels_of({}, 3) == []
+    # Adding a room keeps the old panel and drops the flat keys.
+    room = ps.panel_record("Room 2", 4, {"panel_url": "/p/2.json", "panel_source": "/k/2.zip"})
+    new = ps.with_panel(old, 3, room)
+    assert set(new) == {"panels"}
+    assert [p["id"] for p in new["panels"]] == ["Function_Room", "Room_2"]

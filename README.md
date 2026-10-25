@@ -93,10 +93,19 @@ ramps run as they do on the wall.
 The short way, all in Home Assistant:
 
 1. **Settings → Devices & services → Crestron CIP → (the processor) →
-   Configure.** Upload the panel's `.zip` (or give a path under `/share`).
-   It is imported, made ready for the browser, and kept with the
-   configuration.
-2. **Dashboard → Add card → Crestron XPanel Card**, and pick the processor.
+   Configure → Add or replace a room's panel.** Name the room, give the
+   IPID its panel has in the processor's IP table, and upload the panel's
+   `.zip` (or give a path under `/share`). It is imported, made ready for
+   the browser, and kept with the configuration. Repeat for each room: a
+   processor holds as many panels as it has rooms.
+2. **Dashboard → Add card → Crestron XPanel Card**, and pick the room's
+   panel. Each panel is a device of its own, under its processor.
+
+A panel at an IPID other than the entry's own makes the integration
+register at that IPID too, and serve that room's panels from it. Not every
+processor lets two connections share an IPID with a real panel; if the
+room's wall panel stops responding, remove the panel again (Configure →
+Remove, or delete its device).
 
 The rest of this section is what that does, and the manual route.
 

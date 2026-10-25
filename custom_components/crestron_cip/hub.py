@@ -16,6 +16,63 @@ from .const import SIGNAL_CONN, SIGNAL_NEW, SIGNAL_VALUE
 _LOGGER = logging.getLogger(__name__)
 
 
+class PanelUplink:
+    """A registration at another of the processor's IPIDs, for panels only.
+
+    A room's panel sits at an IPID of its own, and the processor tells each
+    IPID only what its program drives at that IPID, so a panel at IPID 04
+    cannot be served from the entry's own registration at 03. Its feedback
+    makes no entities; it is only for the panels served from it.
+    """
+
+    def __init__(self, hub: CrestronHub, ipid: int) -> None:
+        self.hub = hub
+        self.ipid = ipid
+        self._lost = asyncio.Event()
+        self.client = CIPClient(
+            hub.host, ipid, port=hub.client.port, use_ssl=hub.client.use_ssl,
+            on_disconnect=self._on_disconnect)
+        self.mux = XPanelMux(self.client.send_data, lambda: self.client.connect_response)
+        self.client.data_listeners.append(self.mux.from_processor)
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        self._task = self.hub.entry.async_create_background_task(
+            self.hub.hass, self._run(),
+            f"crestron_cip panels {self.hub.host} IPID {self.ipid:02X}")
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+        self.mux.processor_lost()
+        await self.client.close()
+
+    @callback
+    def _on_disconnect(self) -> None:
+        self.mux.processor_lost()
+        self._lost.set()
+
+    async def _run(self) -> None:
+        delay = 5
+        while True:
+            self._lost.clear()
+            try:
+                await self.client.connect()
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("Panel IPID %02X on %s: %s", self.ipid, self.hub.host, exc)
+                await self.client.close()
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 60)
+                continue
+            _LOGGER.info("Registered for panels at %s IPID %02X", self.hub.host, self.ipid)
+            delay = 5
+            await self._lost.wait()
+            _LOGGER.warning("Lost panel IPID %02X on %s; reconnecting", self.ipid, self.hub.host)
+            await self.client.close()
+            await asyncio.sleep(delay)
+
+
 class CrestronHub:
     """Owns one CIP session for a config entry."""
 
@@ -55,6 +112,8 @@ class CrestronHub:
         # Browser XPanels, served over this one connection.
         self.mux = XPanelMux(self.client.send_data, lambda: self.client.connect_response)
         self.client.data_listeners.append(self.mux.from_processor)
+        # The room panels' other IPIDs, each a registration of its own.
+        self.uplinks: dict[int, PanelUplink] = {}
 
     @property
     def unique_id(self) -> str:
@@ -67,10 +126,27 @@ class CrestronHub:
     async def async_start(self) -> None:
         await self.client.connect()
 
+    def link_for(self, ipid: int) -> tuple[CIPClient, XPanelMux] | None:
+        """The connection and mux a panel at this IPID is served from."""
+        if ipid == self.ipid:
+            return self.client, self.mux
+        uplink = self.uplinks.get(ipid)
+        return (uplink.client, uplink.mux) if uplink else None
+
+    async def async_sync_panels(self, ipids: set[int]) -> None:
+        """Register at every IPID a panel is at, and at none other."""
+        wanted = {int(i) for i in ipids} - {self.ipid}
+        for ipid in set(self.uplinks) - wanted:
+            await self.uplinks.pop(ipid).stop()
+        for ipid in wanted - set(self.uplinks):
+            uplink = self.uplinks[ipid] = PanelUplink(self, ipid)
+            uplink.start()
+
     async def async_stop(self) -> None:
         self._stopping = True
         if self._reconnect_task is not None:
             self._reconnect_task.cancel()
+        await self.async_sync_panels(set())
         self.mux.processor_lost()
         await self.client.close()
 

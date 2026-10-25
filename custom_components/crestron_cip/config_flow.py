@@ -11,19 +11,26 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResu
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
 from homeassistant.core import HomeAssistant, callback
 import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.selector import FileSelector, FileSelectorConfig, TextSelector
+from homeassistant.helpers.selector import (
+    FileSelector, FileSelectorConfig, SelectSelector, SelectSelectorConfig, TextSelector,
+)
 
 from .client import CIPClient
 from .const import (
     CONF_IPID, CONF_PROJECT_FILE, CONF_SSL, DEFAULT_NAME, DEFAULT_PORT,
     DEFAULT_TLS_PORT, DOMAIN,
 )
-from .panel_store import OPT_PANEL_NAME, import_from_file
+from .panel_store import (
+    import_from_file, panel_record, panels_of, with_panel, without_panel,
+)
 from .project_loader import load_project
 
 # The options form: the panel as an upload, or a file already on the box.
 PANEL_UPLOAD = "panel_file"
 PANEL_PATH = "panel_path"
+PANEL_ROOM = "room"
+PANEL_IPID = "ipid"
+PANEL_REMOVE = "panels"
 PANEL_ACCEPT = ".zip,.c3p"
 ALLOWED_ROOTS = ("/share", "/media")
 
@@ -77,34 +84,85 @@ async def _import_panel(hass: HomeAssistant, name: str, upload: str | None,
         return None, "panel_missing"
 
 
+def _ipid_of(text: str) -> int | None:
+    """An IPID as a processor's IP table writes it: hex, "04" or "0x04"."""
+    try:
+        ipid = int(str(text).strip(), 16)
+    except ValueError:
+        return None
+    return ipid if 1 <= ipid <= 0xFE else None
+
+
 class CrestronCipOptionsFlow(OptionsFlow):
-    """Configure: give the processor its panel, as a file."""
+    """Configure: the processor's touch panels, one per room."""
+
+    def _panels(self) -> list[dict[str, Any]]:
+        entry = self.config_entry
+        return panels_of(entry.options, int(entry.data[CONF_IPID]))
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        menu = ["add_panel"]
+        if self._panels():
+            menu.append("remove_panel")
+        names = ", ".join(
+            f"{p['name']} (IPID {int(p['ipid']):02X})" for p in self._panels()) or "none yet"
+        return self.async_show_menu(step_id="init", menu_options=menu,
+                                    description_placeholders={"panels": names})
+
+    async def async_step_add_panel(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         entry = self.config_entry
-        current = entry.options.get(OPT_PANEL_NAME)
         if user_input is not None:
+            room = (user_input.get(PANEL_ROOM) or "").strip()
+            ipid = _ipid_of(user_input.get(PANEL_IPID, ""))
             upload = user_input.get(PANEL_UPLOAD)
             path = (user_input.get(PANEL_PATH) or "").strip() or None
-            if not upload and not path:
-                # Nothing new: keep the panel there is.
-                return self.async_create_entry(data=dict(entry.options))
-            name = entry.data.get(CONF_NAME) or entry.title
-            options, error = await _import_panel(self.hass, name, upload, path)
-            if error:
-                errors["base"] = error
+            if not room:
+                errors[PANEL_ROOM] = "room_missing"
+            elif ipid is None:
+                errors[PANEL_IPID] = "invalid_ipid"
+            elif not upload and not path:
+                errors["base"] = "panel_missing"
             else:
-                options.pop("screens", None)
-                return self.async_create_entry(data={**entry.options, **options})
+                processor = (entry.data.get(CONF_NAME) or entry.title).strip()
+                # The folder is named for processor and room, so two
+                # processors' "Room 1" do not overwrite each other.
+                imported, error = await _import_panel(
+                    self.hass, f"{processor} {room}", upload, path)
+                if error:
+                    errors["base"] = error
+                else:
+                    panel = panel_record(room, ipid, imported)
+                    return self.async_create_entry(
+                        data=with_panel(dict(entry.options), int(entry.data[CONF_IPID]), panel))
 
+        default_ipid = f"{int(entry.data[CONF_IPID]):02X}"
         schema = vol.Schema({
+            vol.Required(PANEL_ROOM): TextSelector(),
+            vol.Required(PANEL_IPID, default=default_ipid): TextSelector(),
             vol.Optional(PANEL_UPLOAD): FileSelector(FileSelectorConfig(accept=PANEL_ACCEPT)),
             vol.Optional(PANEL_PATH): TextSelector(),
         })
-        return self.async_show_form(
-            step_id="init", data_schema=schema, errors=errors,
-            description_placeholders={"current": current or "none yet"})
+        if user_input is not None:
+            schema = self.add_suggested_values_to_schema(
+                schema, {k: v for k, v in user_input.items() if k != PANEL_UPLOAD})
+        return self.async_show_form(step_id="add_panel", data_schema=schema, errors=errors)
+
+    async def async_step_remove_panel(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        entry = self.config_entry
+        ipid = int(entry.data[CONF_IPID])
+        if user_input is not None:
+            options = dict(entry.options)
+            for panel_id in user_input.get(PANEL_REMOVE, []):
+                options = without_panel(options, ipid, panel_id)
+            return self.async_create_entry(data=options)
+        choices = [{"value": p["id"], "label": f"{p['name']} (IPID {int(p['ipid']):02X})"}
+                   for p in self._panels()]
+        schema = vol.Schema({
+            vol.Optional(PANEL_REMOVE, default=[]): SelectSelector(
+                SelectSelectorConfig(options=choices, multiple=True)),
+        })
+        return self.async_show_form(step_id="remove_panel", data_schema=schema)
 
 
 class CrestronCipConfigFlow(ConfigFlow, domain=DOMAIN):

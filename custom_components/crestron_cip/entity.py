@@ -62,8 +62,14 @@ class CrestronJoinEntity(Entity):
         ))
         self.async_on_remove(async_dispatcher_connect(
             self.hass, SIGNAL_CONN.format(entry=self._hub.entry.entry_id),
-            lambda _up: self.async_write_ha_state(),
+            self._handle_conn,
         ))
+
+    @callback
+    def _handle_conn(self, _up: bool) -> None:
+        # A callback, so the dispatcher runs it in the loop: a bare lambda
+        # is run in an executor, where writing state is not allowed.
+        self.async_write_ha_state()
 
     @callback
     def _handle_value(self, value) -> None:  # overridden

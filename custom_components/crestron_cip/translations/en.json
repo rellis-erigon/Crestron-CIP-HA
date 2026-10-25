@@ -29,18 +29,37 @@
   "options": {
     "step": {
       "init": {
-        "title": "Panel",
-        "description": "Give this processor its touch panel: the panel's own .zip (or .c3p) from VTPro-e. It is imported for the Crestron XPanel card, which then needs only this processor's device. Current panel: {current}.",
+        "title": "Touch panels",
+        "description": "This processor's panels, one per room: {panels}.",
+        "menu_options": {
+          "add_panel": "Add or replace a room's panel",
+          "remove_panel": "Remove a room's panel"
+        }
+      },
+      "add_panel": {
+        "title": "Add a room's panel",
+        "description": "The room's touch panel project: its own .zip (or .c3p) from VTPro-e, and the IPID that panel has in the processor's IP table. Each room's panel becomes a device of its own, for the Crestron XPanel card. Giving a room that already has a panel a new file replaces it.\n\nA panel at an IPID other than this processor's own makes Home Assistant register at that IPID too, alongside the real panel there. Not every processor allows two connections at one IPID; if the real panel stops responding, remove this one.",
         "data": {
+          "room": "Room",
+          "ipid": "IPID (hex, e.g. 04)",
           "panel_file": "Panel file (upload)",
           "panel_path": "Or a path to a file already on Home Assistant (/share, /media or the config folder)"
+        }
+      },
+      "remove_panel": {
+        "title": "Remove a room's panel",
+        "description": "The panels picked here are removed, with their devices. The imported files stay.",
+        "data": {
+          "panels": "Panels"
         }
       }
     },
     "error": {
       "panel_outside": "That path is outside the config, share and media folders.",
-      "panel_missing": "No file at that path.",
-      "panel_unreadable": "That file is not a panel project this can draw: no control in it binds a join."
+      "panel_missing": "Give the panel's file: an upload, or a path to a file on Home Assistant.",
+      "panel_unreadable": "That file is not a panel project this can draw: no control in it binds a join.",
+      "room_missing": "Name the room this panel is for.",
+      "invalid_ipid": "IPID must be between 01 and FE (hex, as in the processor's IP table)."
     }
   }
 }
