@@ -75,6 +75,27 @@ def test_smartobject():
     assert j2 == [("serial", 21, "Gym")], j2
 
 
+def test_smartobject_joins_keep_their_object():
+    # A list's serial 31 is not the program's serial 31.
+    payload = bytes.fromhex("00001338000000010d15001e03506f6f6c2041726561")
+    joins = [j for ct, d in p.iter_cresnet_records(payload) for j in p.split_object_joins(ct, d)]
+    assert joins == [("serial", 31, "Pool Area", 1)], joins
+    plain = p.pack_cresnet(p.CresnetType.SERIAL, p.pack_serial(31, "Lobby"))
+    joins = [j for ct, d in p.iter_cresnet_records(plain) for j in p.split_object_joins(ct, d)]
+    assert joins == [("serial", 31, "Lobby", 0)], joins
+
+
+def test_a_smartobject_send_reads_back_as_the_same_join():
+    for record, ctype, want in (
+        (p.pack_digital(4011, True), p.CresnetType.DIGITAL, ("digital", 4011, True, 7)),
+        (p.pack_analog(11, 40000), p.CresnetType.ANALOG, ("analog", 11, 40000, 7)),
+        (p.pack_serial(12, "Zone"), p.CresnetType.SERIAL, ("serial", 12, "Zone", 7)),
+    ):
+        payload = p.pack_smart_object(7, ctype, record)
+        joins = [j for ct, d in p.iter_cresnet_records(payload) for j in p.split_object_joins(ct, d)]
+        assert joins == [want], joins
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

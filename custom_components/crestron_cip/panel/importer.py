@@ -24,6 +24,46 @@ from .reader import RESERVED_FROM, read_panel
 FORMAT = "crestron-panel"
 ART_KEYS = ("src", "src_on", "icon")
 
+# The bus each generated role prefix sits on. Mirrors ROLE_BUS in the card.
+_ROLE_BUS = {"button": "digital", "lamp": "digital", "level": "analog",
+             "fader": "analog", "text": "serial"}
+_ROLE = re.compile(r"^(button|lamp|level|fader|text)_(\d+)$")
+
+
+def _item_role(role: str, spec: dict, index: int) -> str:
+    """The role a template's control takes in item `index` (from 1)."""
+    match = _ROLE.match(role or "")
+    if not match:
+        return role
+    prefix, number = match[1], int(match[2])
+    bus = _ROLE_BUS[prefix]
+    join = spec["starts"][bus] + (index - 1) * spec["increments"][bus] + (number - 1)
+    return f"{prefix}_o{spec['smart_object']}_{join}"
+
+
+def _expand_list(spec: dict, template: dict) -> dict:
+    """A Subpage Reference List as every item it shows, joins offset."""
+    items = []
+    for index in range(1, spec["count"] + 1):
+        regions = []
+        for region in template["regions"]:
+            item = dict(region)
+            item["id"] = f"{region['id']}_i{index}"
+            for key in ("role", "target", "visible_role"):
+                if item.get(key):
+                    item[key] = _item_role(item[key], spec, index)
+            regions.append(item)
+        items.append({"regions": regions})
+    return {
+        "x": spec["left"], "y": spec["top"], "w": spec["width"], "h": spec["height"],
+        "orientation": spec["orientation"],
+        "spacing": spec["spacing"], "margin": spec["margin"],
+        "smart_object": spec["smart_object"],
+        "background": spec.get("background"),
+        "item_size": template["size"],
+        "items": items,
+    }
+
 
 class PanelImportError(Exception):
     """The file is not a panel project this can draw."""
@@ -59,10 +99,26 @@ def build_panel(data: bytes, name: str) -> dict[str, Any]:
             "no control in this project binds a join; it may be an export of "
             "an unprogrammed project rather than the panel's own file")
 
+    by_uid = {m.get("uid"): m["key"] for m in panel["page_meta"] if m.get("uid")}
+    templates = {by_uid.get(spec["subpage_uid"]) for spec in panel.get("lists", [])}
+
     screens: dict[str, dict] = {}
     for key in candidate_screens(panel):
+        if key in templates:
+            # A list's item is drawn inside the list, not as a screen.
+            continue
         faceplate = build_faceplate(panel, page=key, name=f"{name} {key}")
-        if faceplate["regions"]:
+        lists = []
+        for spec in panel.get("lists", []):
+            template_key = by_uid.get(spec["subpage_uid"])
+            if spec["page"] != key or not template_key or spec["count"] < 1:
+                continue
+            template = build_faceplate(panel, page=template_key, name=template_key)
+            if template["regions"]:
+                lists.append(_expand_list(spec, template))
+        if lists:
+            faceplate["lists"] = lists
+        if faceplate["regions"] or lists:
             screens[key] = faceplate
     if not screens:
         raise PanelImportError("no screen in this project draws anything")
@@ -95,8 +151,14 @@ def export_artwork(data: bytes, built: dict[str, Any], folder: Path, url: str) -
     a control drawn in its colour with its label is the smaller loss.
     """
     wanted: set[str] = set()
+    def every_region(screen):
+        yield from screen["regions"]
+        for spec in screen.get("lists", []):
+            for item in spec["items"]:
+                yield from item["regions"]
+
     for screen in built["screens"].values():
-        for region in screen["regions"]:
+        for region in every_region(screen):
             wanted.update(region[k] for k in ART_KEYS if region.get(k))
     written: dict[str, str] = {}
     missing: list[str] = []
@@ -115,7 +177,7 @@ def export_artwork(data: bytes, built: dict[str, Any], folder: Path, url: str) -
         except (zipfile.BadZipFile, OSError):
             missing, written = sorted(wanted), {}
     for screen in built["screens"].values():
-        for region in screen["regions"]:
+        for region in every_region(screen):
             for key in ART_KEYS:
                 if region.get(key):
                     if region[key] in written:

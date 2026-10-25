@@ -16,8 +16,9 @@ from . import protocol as p
 
 _LOG = logging.getLogger(__name__)
 
-# feedback callback: (kind, join, value) where kind in {"digital","analog","serial"}
-FeedbackCb = Callable[[str, int, object], None | Awaitable[None]]
+# feedback callback: (kind, join, value, smart_object) where kind is one of
+# "digital", "analog", "serial" and smart_object is 0 for an ordinary join.
+FeedbackCb = Callable[[str, int, object, int], None | Awaitable[None]]
 
 
 class CIPClient:
@@ -55,6 +56,9 @@ class CIPClient:
         self.digital: dict[int, bool] = {}
         self.analog: dict[int, int] = {}
         self.serial: dict[int, str] = {}
+        # SmartObject joins: (object, kind, join) -> value. A namespace of
+        # their own; see protocol.split_object_joins.
+        self.smart: dict[tuple[int, str, int], object] = {}
 
         # ring buffer of recent inbound frames (type, hex) for empirical capture
         self.raw_frames: list[tuple[int, str]] = []
@@ -151,28 +155,48 @@ class CIPClient:
                 self._writer.close()
 
     # -- outbound join writes ----------------------------------------------
-    async def set_digital(self, join: int, value: bool) -> None:
-        await self._send_join(p.CresnetType.DIGITAL, p.pack_digital(join, value))
-        self.digital[join] = value
+    async def set_digital(self, join: int, value: bool, obj: int = 0) -> None:
+        await self._send_join(p.CresnetType.DIGITAL, p.pack_digital(join, value), obj)
+        self._store("digital", join, value, obj)
 
-    async def pulse_digital(self, join: int, duration: float = 0.1) -> None:
+    async def pulse_digital(self, join: int, duration: float = 0.1, obj: int = 0) -> None:
         """Momentary press: assert, wait, release — the usual button action."""
-        await self.set_digital(join, True)
+        await self.set_digital(join, True, obj)
         await asyncio.sleep(duration)
-        await self.set_digital(join, False)
+        await self.set_digital(join, False, obj)
 
-    async def set_analog(self, join: int, value: int) -> None:
-        await self._send_join(p.CresnetType.ANALOG, p.pack_analog(join, value))
-        self.analog[join] = value & 0xFFFF
+    async def set_analog(self, join: int, value: int, obj: int = 0) -> None:
+        await self._send_join(p.CresnetType.ANALOG, p.pack_analog(join, value), obj)
+        self._store("analog", join, value & 0xFFFF, obj)
 
-    async def set_serial(self, join: int, text: str, unicode: bool = False) -> None:
-        await self._send_join(p.CresnetType.SERIAL, p.pack_serial(join, text, unicode))
-        self.serial[join] = text
+    async def set_serial(self, join: int, text: str, unicode: bool = False, obj: int = 0) -> None:
+        await self._send_join(p.CresnetType.SERIAL, p.pack_serial(join, text, unicode), obj)
+        self._store("serial", join, text, obj)
 
-    async def _send_join(self, cresnet_type: int, record: bytes) -> None:
+    def value(self, kind: str, join: int, obj: int = 0) -> object:
+        """The last value seen for a join, or None."""
+        if obj:
+            return self.smart.get((obj, kind, join))
+        return {"digital": self.digital, "analog": self.analog,
+                "serial": self.serial}[kind].get(join)
+
+    def _store(self, kind: str, join: int, value: object, obj: int) -> None:
+        if obj:
+            self.smart[(obj, kind, join)] = value
+        elif kind == "digital":
+            self.digital[join] = value
+        elif kind == "analog":
+            self.analog[join] = value
+        elif kind == "serial":
+            self.serial[join] = value
+
+    async def _send_join(self, cresnet_type: int, record: bytes, obj: int = 0) -> None:
         # DATA payload = Cresnet frame [0x00 prefix][len:2 BE][type][record],
-        # wrapped by the [05][len:2 BE] outer frame.
-        await self._send(p.PacketType.DATA, p.pack_cresnet(cresnet_type, record))
+        # wrapped by the [05][len:2 BE] outer frame. A SmartObject's join
+        # goes inside a SmartObject record addressed to it.
+        payload = (p.pack_smart_object(obj, cresnet_type, record) if obj
+                   else p.pack_cresnet(cresnet_type, record))
+        await self._send(p.PacketType.DATA, payload)
 
     async def request_update(self) -> None:
         """Ask the processor to (re)send the current state of all joins."""
@@ -220,21 +244,16 @@ class CIPClient:
     def _parse_data(self, payload: bytes) -> None:
         try:
             for ctype, data in p.iter_cresnet_records(payload):
-                for kind, join, value in p.split_joins(ctype, data):
-                    if kind == "digital":
-                        self.digital[join] = value
-                    elif kind == "analog":
-                        self.analog[join] = value
-                    elif kind == "serial":
-                        self.serial[join] = value
-                    self._emit(kind, join, value)
+                for kind, join, value, obj in p.split_object_joins(ctype, data):
+                    self._store(kind, join, value, obj)
+                    self._emit(kind, join, value, obj)
         except Exception as exc:  # noqa: BLE001
             _LOG.debug("DATA parse skipped (%s): %s", exc, payload.hex())
 
-    def _emit(self, kind: str, join: int, value: object) -> None:
+    def _emit(self, kind: str, join: int, value: object, obj: int = 0) -> None:
         if not self.on_feedback:
             return
-        res = self.on_feedback(kind, join, value)
+        res = self.on_feedback(kind, join, value, obj)
         if asyncio.iscoroutine(res):
             asyncio.create_task(res)
 

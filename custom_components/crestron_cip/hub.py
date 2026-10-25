@@ -27,12 +27,13 @@ class CrestronHub:
         self.ipid = ipid
         self._stopping = False
         self._reconnect_task: asyncio.Task | None = None
-        self._seen: set[tuple[str, int]] = set()
+        # (kind, join, smart object); the object is 0 for an ordinary join.
+        self._seen: set[tuple[str, int, int]] = set()
         # digital join -> when it last went high. Kept here rather than on
         # the entity because the entity for a join first seen in a pulse
         # is created after the pulse has been released.
-        self.last_on: dict[int, str] = {}
-        self._on: dict[int, bool] = {}
+        self.last_on: dict[tuple[int, int], str] = {}
+        self._on: dict[tuple[int, int], bool] = {}
         self.joinmap = None
         self._labels: dict[tuple[str, int], str] = {}
         if project_file:
@@ -100,29 +101,30 @@ class CrestronHub:
         async_dispatcher_send(self.hass, SIGNAL_CONN.format(entry=self.entry.entry_id), up)
 
     @callback
-    def _on_feedback(self, kind: str, join: int, value: object) -> None:
-        key = (kind, join)
-        if kind == "digital" and value and not self._was_on(join):
-            self.last_on[join] = dt_util.utcnow().isoformat()
+    def _on_feedback(self, kind: str, join: int, value: object, obj: int = 0) -> None:
+        key = (kind, join, obj)
         if kind == "digital":
-            self._on[join] = bool(value)
+            if value and not self._on.get((obj, join), False):
+                self.last_on[(obj, join)] = dt_util.utcnow().isoformat()
+            self._on[(obj, join)] = bool(value)
         if key not in self._seen:
             self._seen.add(key)
-            async_dispatcher_send(self.hass, SIGNAL_NEW.format(entry=self.entry.entry_id), kind, join)
+            async_dispatcher_send(
+                self.hass, SIGNAL_NEW.format(entry=self.entry.entry_id), kind, join, obj)
         async_dispatcher_send(
             self.hass,
-            SIGNAL_VALUE.format(entry=self.entry.entry_id, kind=kind, join=join),
+            SIGNAL_VALUE.format(entry=self.entry.entry_id, kind=kind, obj=obj, join=join),
             value,
         )
 
-    def _was_on(self, join: int) -> bool:
-        return self._on.get(join, False)
+    def known(self, kind: str) -> list[tuple[int, int]]:
+        """(join, smart object) for every join of this kind seen so far."""
+        return sorted((j, o) for (k, j, o) in self._seen if k == kind)
 
-    def known(self, kind: str) -> list[int]:
-        return sorted(j for (k, j) in self._seen if k == kind)
-
-    def name_for(self, signal: str, join: int) -> str:
+    def name_for(self, signal: str, join: int, obj: int = 0) -> str:
         """Friendly entity name: project label if known, else a generic one."""
+        if obj:
+            return f"{self.name} object {obj} {signal} {join}"
         label = self._labels.get((signal, join))
         base = label or f"{signal} {join}"
         return f"{self.name} {base}"

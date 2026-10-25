@@ -197,6 +197,10 @@ def region_for(obj: dict[str, Any], index: int) -> dict[str, Any] | None:
         base["action"] = "press"
         base["target"] = base["role"]
         base["text"] = label
+        if text_joins:
+            # A button whose label the processor writes — a source name, a
+            # room name. The static text is only what the designer typed.
+            base["label_role"] = _role("text", text_joins[0], index)
         base["radius"] = 6
         base.update(_style_of(obj))
         return base
@@ -215,6 +219,9 @@ def region_for(obj: dict[str, Any], index: int) -> dict[str, Any] | None:
         base["role"] = _role("fader", _first_join(obj, "analog"), index)
         base["max"] = 65535
         base["ticks"] = 0
+        # A panel fader is dragged; where it is let go is the level sent.
+        base["action"] = "set_level"
+        base["target"] = base["role"]
         return base
 
     if kind == "text":

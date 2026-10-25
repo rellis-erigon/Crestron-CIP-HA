@@ -16,8 +16,8 @@ PLATFORMS = ["binary_sensor", "sensor", "button"]
 
 # dispatcher signals
 SIGNAL_CONN = f"{DOMAIN}_conn_{{entry}}"              # connectivity changed
-SIGNAL_NEW = f"{DOMAIN}_new_{{entry}}"                # (kind, join) new feedback join seen
-SIGNAL_VALUE = f"{DOMAIN}_val_{{entry}}_{{kind}}_{{join}}"  # value update for one join
+SIGNAL_NEW = f"{DOMAIN}_new_{{entry}}"                # (kind, join, obj) new feedback join seen
+SIGNAL_VALUE = f"{DOMAIN}_val_{{entry}}_{{kind}}_{{obj}}_{{join}}"  # value update for one join
 
 # services
 SERVICE_PRESS = "press"
@@ -32,6 +32,7 @@ ATTR_VALUE = "value"
 ATTR_DURATION = "duration"
 ATTR_ENTRY_ID = "entry_id"
 ATTR_PATH = "path"
+ATTR_SMART_OBJECT = "smart_object"
 ATTR_NAME = "name"
 
 # Where imported panels go. Home Assistant serves config/www at /local, a

@@ -16,7 +16,7 @@ async def run() -> None:
 
     got: list[tuple] = []
     client = CIPClient("127.0.0.1", ipid=0x0A, port=port, use_ssl=False,
-                       on_feedback=lambda k, j, v: got.append((k, j, v)))
+                       on_feedback=lambda k, j, v, o=0: got.append((k, j, v)))
     await client.connect(timeout=5.0)
     assert client.connected, "client did not register"
     assert proc.registered_ipid == 0x0A, f"server saw ipid {proc.registered_ipid}"

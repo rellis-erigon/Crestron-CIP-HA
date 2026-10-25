@@ -30,6 +30,15 @@ press:
       selector:
         config_entry:
           integration: crestron_cip
+    smart_object:
+      name: SmartObject
+      description: For a join inside a SmartObject, such as a list item, its object id.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 65535
+          mode: box
 
 set_digital:
   name: Set digital
@@ -38,6 +47,7 @@ set_digital:
     join: { name: Join, required: true, selector: { number: { min: 1, max: 65535, mode: box } } }
     value: { name: Value, required: true, selector: { boolean: {} } }
     entry_id: { name: Config entry, required: false, selector: { config_entry: { integration: crestron_cip } } }
+    smart_object: { name: SmartObject, required: false, selector: { number: { min: 1, max: 65535, mode: box } } }
 
 set_analog:
   name: Set analog
@@ -46,6 +56,7 @@ set_analog:
     join: { name: Join, required: true, selector: { number: { min: 1, max: 65535, mode: box } } }
     value: { name: Value, required: true, selector: { number: { min: 0, max: 65535, mode: box } } }
     entry_id: { name: Config entry, required: false, selector: { config_entry: { integration: crestron_cip } } }
+    smart_object: { name: SmartObject, required: false, selector: { number: { min: 1, max: 65535, mode: box } } }
 
 set_serial:
   name: Set serial
@@ -54,6 +65,7 @@ set_serial:
     join: { name: Join, required: true, selector: { number: { min: 1, max: 65535, mode: box } } }
     value: { name: Text, required: true, selector: { text: {} } }
     entry_id: { name: Config entry, required: false, selector: { config_entry: { integration: crestron_cip } } }
+    smart_object: { name: SmartObject, required: false, selector: { number: { min: 1, max: 65535, mode: box } } }
 
 request_update:
   name: Request update

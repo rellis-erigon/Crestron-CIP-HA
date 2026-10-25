@@ -303,6 +303,58 @@ def _as_int(value: str | None) -> int | None:
     return None
 
 
+def _reference_list(node: Any, page: str) -> dict:
+    """A Subpage Reference List: one subpage drawn N times, joins offset.
+
+    Item i (from 1) of a list binds the template's join n at
+    start + (i - 1) * increment + (n - 1), on each bus, inside the list's
+    SmartObject. A zone strip repeated sixteen times is one subpage in the
+    project and sixteen on the wall, so reading the template alone draws
+    one zone.
+    """
+    props = node.find("Properties")
+
+    def text(path: str) -> str:
+        return ((props.findtext(path) if props is not None else None) or "").strip()
+
+    def number(path: str, default: int = 0) -> int:
+        return _as_int(text(path)) or default
+
+    orientation = "vertical"
+    if props is not None and props.find("Orientation/Horizontal") is not None:
+        orientation = "horizontal"
+    control = (node.findtext("ControlName") or "").strip()
+    if "Horizontal" in control:
+        orientation = "horizontal"
+    return {
+        "page": page,
+        "name": (node.findtext("ObjectName") or "").strip(),
+        "left": number("PositionAndSize/Left"),
+        "top": number("PositionAndSize/Top"),
+        "width": number("PositionAndSize/Width"),
+        "height": number("PositionAndSize/Height"),
+        "orientation": orientation,
+        # The list is a SmartObject; its id is the control join.
+        "smart_object": number("ControlJoin"),
+        "subpage_uid": text("Subpage/PageID"),
+        "count": number("NumSubpageReferences"),
+        "spacing": number("ItemSpacing"),
+        "margin": number("Margin"),
+        "starts": {
+            "digital": number("DigitalTriListJoinGroup/StartJoinNumber", 1),
+            "analog": number("AnalogTriListJoinGroup/StartJoinNumber", 1),
+            "serial": number("SerialTriListJoinGroup/StartJoinNumber", 1),
+        },
+        "increments": {
+            "digital": number("DigitalJoinIncrement"),
+            "analog": number("AnalogJoinIncrement"),
+            "serial": number("SerialJoinIncrement"),
+        },
+        "background": _colour(text("Orientation/Horizontal/BackgroundColor")
+                              or text("Orientation/Vertical/BackgroundColor")),
+    }
+
+
 def read_panel(data: bytes) -> dict:
     """Every object on the panel, with its joins and where it sits.
 
@@ -343,6 +395,7 @@ def read_panel(data: bytes) -> dict:
     # separate, anonymous subpages whose coordinates start again at 0,0.
     page_meta: list[dict] = []
     references: list[dict] = []
+    lists: list[dict] = []
 
     def visit(node: Any, page: str, path: str = "") -> None:
         # A *reference* is tagged <Subpage>; a subpage *definition* is a
@@ -377,6 +430,8 @@ def read_panel(data: bytes) -> dict:
                 page_meta.append({
                     "key": page,
                     "name": name,
+                    # What a Subpage Reference List names its item by.
+                    "uid": node.get("uid"),
                     "kind": "subpage"
                     if (node.findtext("ControlName") or "").strip() == "Subpage"
                     else "page",
@@ -397,6 +452,9 @@ def read_panel(data: bytes) -> dict:
                     == "true",
                     "order": len(page_meta),
                 })
+        if node.tag == "Child" and (node.findtext("ControlName") or "").strip().startswith(
+                "Subpage Reference List"):
+            lists.append(_reference_list(node, page))
         if node.tag == "Child":
             props = _own_properties(node)
             joins: dict[str, dict] = {}
@@ -462,6 +520,7 @@ def read_panel(data: bytes) -> dict:
         "pages": sorted({o["page"] for o in deduped if o["page"]}),
         "page_meta": page_meta,
         "references": references,
+        "lists": lists,
         "duplicates_collapsed": len(objects) - len(deduped),
     }
 

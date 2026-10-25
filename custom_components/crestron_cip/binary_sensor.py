@@ -21,13 +21,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     async_add_entities([CrestronConnectivity(hub)])
 
     @callback
-    def _add(kind: str, join: int) -> None:
+    def _add(kind: str, join: int, obj: int = 0) -> None:
         if kind == "digital":
-            async_add_entities([CrestronDigital(hub, join)])
+            async_add_entities([CrestronDigital(hub, join, obj)])
 
     entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_NEW.format(entry=entry.entry_id), _add))
-    for join in hub.known("digital"):
-        _add("digital", join)
+    for join, obj in hub.known("digital"):
+        _add("digital", join, obj)
 
 
 class CrestronConnectivity(BinarySensorEntity):
@@ -68,14 +68,14 @@ class CrestronDigital(CrestronJoinEntity, BinarySensorEntity, RestoreEntity):
 
     @property
     def is_on(self) -> bool | None:
-        return self._hub.client.digital.get(self._join)
+        return self._value
 
     @property
     def extra_state_attributes(self) -> dict[str, str]:
         attrs = super().extra_state_attributes
         # The hub's record is this session's; the restored one is from
         # before a restart. ISO timestamps in UTC sort as strings.
-        last_on = max(filter(None, (self._hub.last_on.get(self._join), self._last_on)),
+        last_on = max(filter(None, (self._hub.last_on.get((self._obj, self._join)), self._last_on)),
                       default=None)
         if last_on:
             attrs["last_on"] = last_on

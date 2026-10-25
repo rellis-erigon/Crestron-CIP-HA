@@ -16,16 +16,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     hub: CrestronHub = hass.data[DOMAIN][entry.entry_id]
 
     @callback
-    def _add(kind: str, join: int) -> None:
+    def _add(kind: str, join: int, obj: int = 0) -> None:
         if kind == "serial":
-            async_add_entities([CrestronSerial(hub, join)])
+            async_add_entities([CrestronSerial(hub, join, obj)])
         elif kind == "analog":
-            async_add_entities([CrestronAnalog(hub, join)])
+            async_add_entities([CrestronAnalog(hub, join, obj)])
 
     entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_NEW.format(entry=entry.entry_id), _add))
     for kind in ("serial", "analog"):
-        for join in hub.known(kind):
-            _add(kind, join)
+        for join, obj in hub.known(kind):
+            _add(kind, join, obj)
 
 
 class CrestronSerial(CrestronJoinEntity, SensorEntity):
@@ -33,7 +33,7 @@ class CrestronSerial(CrestronJoinEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        return self._hub.client.serial.get(self._join)
+        return self._value
 
 
 class CrestronAnalog(CrestronJoinEntity, SensorEntity):
@@ -50,4 +50,4 @@ class CrestronAnalog(CrestronJoinEntity, SensorEntity):
 
     @property
     def native_value(self) -> int | None:
-        return self._hub.client.analog.get(self._join)
+        return self._value

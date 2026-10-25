@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.18.0 — 2026-10-25
+
+- **New**: Subpage Reference Lists are imported as every item they show.
+  A list is one subpage in the project and sixteen zone strips on the
+  wall; before, a card drew one. Item n binds the template's join j at
+  start + (n - 1) × increment + (j - 1), per bus.
+- **Fixed**: SmartObject joins are their own namespace. A list item's
+  serial 31 was stored as the program's serial 31, so the two fought over
+  one entity. They are now entities of their own, with `join` like
+  `o1:s31`, and every action takes `smart_object` to send into one.
+- Buttons whose label the processor writes now say so (`label_role`), and
+  faders send the level they are dragged to.
+
 ## 0.17.0 — 2026-10-25
 
 - **New**: `crestron_cip.import_panel` reads a panel project (.c3p or the

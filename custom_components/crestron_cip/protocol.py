@@ -187,7 +187,25 @@ def iter_cresnet_records(payload: bytes):
 
 
 def split_joins(cresnet_type: int, data: bytes):
-    """Split a Cresnet record into (kind, join, value) tuples.
+    """Split a Cresnet record into (kind, join, value) tuples, dropping
+    which SmartObject a join belongs to. See `split_object_joins`."""
+    for kind, join, value, _obj in split_object_joins(cresnet_type, data):
+        yield kind, join, value
+
+
+def pack_smart_object(obj: int, cresnet_type: int, record: bytes) -> bytes:
+    """A join record addressed to SmartObject `obj`, as a DATA payload."""
+    body = bytes(((obj >> 24) & 0xFF, (obj >> 16) & 0xFF, (obj >> 8) & 0xFF, obj & 0xFF,
+                  len(record) + 1, cresnet_type)) + record
+    return pack_cresnet(CresnetType.SMART_OBJECT, body)
+
+
+def split_object_joins(cresnet_type: int, data: bytes, obj: int = 0):
+    """Split a Cresnet record into (kind, join, value, smart_object) tuples.
+
+    `smart_object` is 0 for an ordinary join. A SmartObject's joins are a
+    namespace of their own: a list's serial 11 is not the program's serial
+    11, and treating them as one makes two signals fight over one entity.
 
     Digital/analog records may pack several joins; serial is one record. SmartObject
     records nest further joins: [objid:4 BE] then items of [len:1][type:1][record],
@@ -196,20 +214,21 @@ def split_joins(cresnet_type: int, data: bytes):
     """
     if cresnet_type in (CresnetType.DIGITAL, CresnetType.REPEAT_DIGITAL):
         for k in range(0, len(data) - 1, 2):
-            yield ("digital", *unpack_digital(data[k:k + 2]))
+            yield ("digital", *unpack_digital(data[k:k + 2]), obj)
     elif cresnet_type in (CresnetType.ANALOG, CresnetType.X_GEN_ANALOG):
         for k in range(0, len(data) - 3, 4):
-            yield ("analog", *unpack_analog(data[k:k + 4]))
+            yield ("analog", *unpack_analog(data[k:k + 4]), obj)
     elif cresnet_type in (CresnetType.SERIAL, CresnetType.UNMANGLED_SERIAL,
                           CresnetType.SERIAL_EXTENDED) and len(data) >= 3:
-        yield ("serial", *unpack_serial(data))
+        yield ("serial", *unpack_serial(data), obj)
     elif cresnet_type in (CresnetType.SMART_OBJECT, CresnetType.SMART_OBJECT_EXTENDED) and len(data) >= 4:
-        i = 4  # skip the 32-bit object id
+        inner = int.from_bytes(data[:4], "big")
+        i = 4  # past the 32-bit object id
         while i + 2 <= len(data):
             nlen = data[i]
             if nlen < 1:
                 break
             ntype = data[i + 1]
             rec = data[i + 2: i + 1 + nlen]
-            yield from split_joins(ntype, rec)
+            yield from split_object_joins(ntype, rec, inner)
             i += 1 + nlen

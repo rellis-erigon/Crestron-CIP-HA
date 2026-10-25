@@ -13,7 +13,7 @@ from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 import homeassistant.helpers.config_validation as cv
 
 from .const import (
-    ATTR_DURATION, ATTR_ENTRY_ID, ATTR_JOIN, ATTR_NAME, ATTR_PATH, ATTR_VALUE,
+    ATTR_DURATION, ATTR_ENTRY_ID, ATTR_JOIN, ATTR_NAME, ATTR_PATH, ATTR_SMART_OBJECT, ATTR_VALUE,
     CONF_IPID, CONF_PROJECT_FILE, CONF_SSL, DEFAULT_PORT, DEFAULT_TLS_PORT, DOMAIN,
     PANEL_DIR, PANEL_URL, PLATFORMS, SERVICE_IMPORT_PANEL, SERVICE_PRESS,
     SERVICE_REQUEST_UPDATE, SERVICE_SET_ANALOG, SERVICE_SET_DIGITAL, SERVICE_SET_SERIAL,
@@ -82,21 +82,28 @@ def _register_services(hass: HomeAssistant) -> None:
             return [hubs[eid]] if eid in hubs else []
         return list(hubs.values())
 
+    def _obj(call: ServiceCall) -> int:
+        return int(call.data.get(ATTR_SMART_OBJECT, 0))
+
     async def press(call: ServiceCall) -> None:
         for h in _hubs(call):
-            await h.client.pulse_digital(int(call.data[ATTR_JOIN]), float(call.data.get(ATTR_DURATION, 0.1)))
+            await h.client.pulse_digital(int(call.data[ATTR_JOIN]),
+                                         float(call.data.get(ATTR_DURATION, 0.1)), obj=_obj(call))
 
     async def set_digital(call: ServiceCall) -> None:
         for h in _hubs(call):
-            await h.client.set_digital(int(call.data[ATTR_JOIN]), bool(call.data[ATTR_VALUE]))
+            await h.client.set_digital(int(call.data[ATTR_JOIN]), bool(call.data[ATTR_VALUE]),
+                                       obj=_obj(call))
 
     async def set_analog(call: ServiceCall) -> None:
         for h in _hubs(call):
-            await h.client.set_analog(int(call.data[ATTR_JOIN]), int(call.data[ATTR_VALUE]))
+            await h.client.set_analog(int(call.data[ATTR_JOIN]), int(call.data[ATTR_VALUE]),
+                                      obj=_obj(call))
 
     async def set_serial(call: ServiceCall) -> None:
         for h in _hubs(call):
-            await h.client.set_serial(int(call.data[ATTR_JOIN]), str(call.data[ATTR_VALUE]))
+            await h.client.set_serial(int(call.data[ATTR_JOIN]), str(call.data[ATTR_VALUE]),
+                                      obj=_obj(call))
 
     async def request_update(call: ServiceCall) -> None:
         for h in _hubs(call):
@@ -128,7 +135,9 @@ def _register_services(hass: HomeAssistant) -> None:
         _LOGGER.info("Imported panel %s: %d screens", name, len(result["screens"]))
         return result
 
-    base = {vol.Optional(ATTR_ENTRY_ID): cv.string}
+    base = {vol.Optional(ATTR_ENTRY_ID): cv.string,
+            # A join inside a SmartObject (a list, a keypad) is addressed to it.
+            vol.Optional(ATTR_SMART_OBJECT): cv.positive_int}
     hass.services.async_register(DOMAIN, SERVICE_PRESS, press,
         vol.Schema({**base, vol.Required(ATTR_JOIN): cv.positive_int, vol.Optional(ATTR_DURATION): cv.positive_float}))
     hass.services.async_register(DOMAIN, SERVICE_SET_DIGITAL, set_digital,

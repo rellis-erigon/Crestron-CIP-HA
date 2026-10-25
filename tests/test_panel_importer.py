@@ -110,3 +110,57 @@ def test_write_panel_puts_the_panel_and_its_artwork_where_a_card_can_load_them()
 def test_a_folder_name_cannot_escape_the_panel_directory():
     assert importer.slug("../../etc") == "etc"
     assert importer.slug("a/b c") == "a_b_c"
+
+
+def reference_list(subpage_uid, count, obj=1):
+    return f"""
+      <Child>
+        <ControlName>Subpage Reference List Horizontal</ControlName>
+        <ObjectName>Zones</ObjectName>
+        <Properties>
+          <PositionAndSize><Top>120</Top><Left>0</Left><Width>1276</Width><Height>650</Height></PositionAndSize>
+          <ControlJoin>{obj}</ControlJoin>
+          <ItemSpacing>10</ItemSpacing><Margin>5</Margin>
+          <DigitalJoinIncrement>10</DigitalJoinIncrement>
+          <AnalogJoinIncrement>10</AnalogJoinIncrement>
+          <SerialJoinIncrement>10</SerialJoinIncrement>
+          <DigitalTriListJoinGroup><StartJoinNumber>4011</StartJoinNumber></DigitalTriListJoinGroup>
+          <AnalogTriListJoinGroup><StartJoinNumber>11</StartJoinNumber></AnalogTriListJoinGroup>
+          <SerialTriListJoinGroup><StartJoinNumber>11</StartJoinNumber></SerialTriListJoinGroup>
+          <Subpage Type="SubpageRef"><PageID>{subpage_uid}</PageID></Subpage>
+          <NumSubpageReferences>{count}</NumSubpageReferences>
+        </Properties>
+      </Child>"""
+
+
+def zone_strip():
+    return """
+      <Page uid="3">
+        <ControlName>Subpage</ControlName>
+        <ObjectName>Zone</ObjectName>
+        <Properties>
+          <Width>200</Width><Height>640</Height>
+          <Children>
+            <Child><ControlName>Advanced Button</ControlName><ObjectName>Mute</ObjectName>
+              <Properties><Left>10</Left><Top>500</Top><Width>180</Width><Height>60</Height>
+                <DigitalPressJoin>1</DigitalPressJoin></Properties></Child>
+            <Child><ControlName>Fader Slider Vertical</ControlName><ObjectName>Level</ObjectName>
+              <Properties><Left>70</Left><Top>80</Top><Width>60</Width><Height>400</Height>
+                <AnalogFeedbackJoin>1</AnalogFeedbackJoin></Properties></Child>
+          </Children>
+        </Properties>
+      </Page>"""
+
+
+def test_a_reference_list_draws_every_item_with_its_own_joins():
+    data = project(page("Page", 0, reference_list(3, 16) + button("Home", 5)) + zone_strip())
+    built = importer.build_panel(data, "BGM")
+    # The zone strip is drawn inside the list, not offered as a screen.
+    assert list(built["screens"]) == ["Page"]
+    zones = built["screens"]["Page"]["lists"][0]
+    assert len(zones["items"]) == 16
+    roles = lambda i: {r["role"] for r in zones["items"][i - 1]["regions"]}
+    # Item n binds join j at start + (n - 1) * 10 + (j - 1), in object 1.
+    assert roles(1) == {"button_o1_4011", "fader_o1_11"}
+    assert roles(16) == {"button_o1_4161", "fader_o1_161"}
+    assert zones["item_size"] == [200, 640]

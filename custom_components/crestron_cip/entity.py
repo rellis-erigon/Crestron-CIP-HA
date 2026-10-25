@@ -21,11 +21,15 @@ class CrestronJoinEntity(Entity):
     _attr_should_poll = False
     _kind: str = ""
 
-    def __init__(self, hub: CrestronHub, join: int) -> None:
+    def __init__(self, hub: CrestronHub, join: int, obj: int = 0) -> None:
         self._hub = hub
         self._join = join
-        self._attr_unique_id = f"{hub.unique_id}_{self._kind}_{join}"
-        self._attr_name = hub.name_for(self._kind, join)
+        self._obj = obj
+        # An ordinary join keeps the id it has always had.
+        self._attr_unique_id = (
+            f"{hub.unique_id}_o{obj}_{self._kind}_{join}" if obj
+            else f"{hub.unique_id}_{self._kind}_{join}")
+        self._attr_name = hub.name_for(self._kind, join, obj)
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, hub.unique_id)},
             name=hub.name,
@@ -40,12 +44,20 @@ class CrestronJoinEntity(Entity):
 
     @property
     def extra_state_attributes(self) -> dict[str, str]:
-        return {"join": f"{_BUS[self._kind]}{self._join}"}
+        key = f"{_BUS[self._kind]}{self._join}"
+        # A SmartObject's joins are its own namespace: "o1:s11" is the first
+        # list item's text, not the program's serial 11.
+        return {"join": f"o{self._obj}:{key}" if self._obj else key}
+
+    @property
+    def _value(self):
+        return self._hub.client.value(self._kind, self._join, self._obj)
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(async_dispatcher_connect(
             self.hass,
-            SIGNAL_VALUE.format(entry=self._hub.entry.entry_id, kind=self._kind, join=self._join),
+            SIGNAL_VALUE.format(entry=self._hub.entry.entry_id, kind=self._kind,
+                                obj=self._obj, join=self._join),
             self._handle_value,
         ))
         self.async_on_remove(async_dispatcher_connect(
