@@ -60,6 +60,12 @@ class CIPClient:
         # their own; see protocol.split_object_joins.
         self.smart: dict[tuple[int, str, int], object] = {}
 
+        # The processor's answer to our registration, which a panel served by
+        # xpanel_mux is given as its own; and who else wants each DATA
+        # payload as it came.
+        self.connect_response: bytes = b""
+        self.data_listeners: list[Callable[[bytes], None]] = []
+
         # ring buffer of recent inbound frames (type, hex) for empirical capture
         self.raw_frames: list[tuple[int, str]] = []
 
@@ -125,6 +131,7 @@ class CIPClient:
                 f"IPID 0x{self.ipid:02X} is not defined in the program on {self.host}")
             self._registered.set()
             return
+        self.connect_response = payload
         # payload[0] != 0 commonly signals a registration problem (e.g. IPID in use).
         if payload and payload[0] not in (0x00,):
             _LOG.warning("CIP registration response flagged: %r", payload.hex())
@@ -198,6 +205,10 @@ class CIPClient:
                    else p.pack_cresnet(cresnet_type, record))
         await self._send(p.PacketType.DATA, payload)
 
+    async def send_data(self, payload: bytes) -> None:
+        """Send a DATA payload as it is: a panel's joins, passed through."""
+        await self._send(p.PacketType.DATA, payload)
+
     async def request_update(self) -> None:
         """Ask the processor to (re)send the current state of all joins."""
         await self._send(p.PacketType.DATA,
@@ -232,6 +243,11 @@ class CIPClient:
         elif ptype == p.PacketType.HEARTBEAT:
             await self._send(p.PacketType.HEARTBEAT_RESPONSE)
         elif ptype in (p.PacketType.DATA, p.PacketType.EXTENDED_DATA):
+            for listener in self.data_listeners:
+                try:
+                    listener(payload)
+                except Exception as exc:  # noqa: BLE001
+                    _LOG.debug("DATA listener failed: %s", exc)
             self._parse_data(payload)
         elif ptype == p.PacketType.PROGRAM_READY:
             _LOG.info("Processor reports PROGRAM_READY")

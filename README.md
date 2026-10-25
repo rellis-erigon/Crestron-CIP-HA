@@ -104,10 +104,16 @@ xpanel_url: /local/crestron-panels/Room/xpanel/container.swf
 
 The XPanel speaks CIP over TCP, which a browser cannot open. Ruffle turns
 its socket into a websocket to `/api/crestron_cip/xpanel/<entry>`, and the
-integration carries it to the processor. **Each open card is its own
-connection at the entry's IPID**, so use it only on a processor that
-accepts a shared IPID, or give it an IPID of its own. Experimental: whether
-Ruffle runs a given XPanel build has to be tried in a browser.
+integration serves it **from its own connection**: it answers the panel as
+the processor does and replays what the processor has reported, then passes
+presses up and changes down. However many browsers have the panel open,
+the processor sees one registration at the IPID.
+
+A panel keeps running while you move between views, so coming back does
+not reload it. Experimental: whether Ruffle runs a given XPanel build has
+to be tried in a browser. `import_panel` makes the changes a Crestron
+XPanel needs to run there (UTF-8 `Environment.xml`, web paths, lowercase
+file names, and Ruffle's missing `SecureSocket`).
 
 ## Actions
 

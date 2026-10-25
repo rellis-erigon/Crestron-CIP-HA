@@ -1,15 +1,15 @@
-"""Carry a browser XPanel's CIP connection to its processor.
+"""The websocket a browser XPanel's CIP socket arrives on.
 
 The XPanel a panel project compiles to is Crestron's own Flash program. It
 draws the panel, runs its page logic and speaks CIP itself, over a raw TCP
 socket. A browser cannot open one, so the card runs it under Ruffle, which
-turns each socket into a websocket; this view is the other end of that
-websocket and opens the real TCP connection, byte for byte.
+turns each socket into a websocket; this view is the other end of it.
 
-Nothing here reads or changes what passes through. The XPanel registers at
-the config entry's IPID exactly as the wall panel does, so on a processor
-that will not share an IPID (a CP4 has refused to) this needs an IPID of its
-own in the program, as the integration itself does.
+By default the panel is served from the integration's own connection
+(xpanel_mux): one registration at the IPID however many panels are open,
+which is what a processor that will not share an IPID needs. With
+`?direct` the socket is instead carried to the processor byte for byte, as
+a registration of its own; that is kept to compare the two.
 """
 from __future__ import annotations
 
@@ -25,7 +25,9 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant, callback
 
+from . import protocol as p
 from .const import CONF_IPID, CONF_SSL, DEFAULT_PORT, DEFAULT_TLS_PORT, DOMAIN
+from .xpanel_mux import PANEL_SILENCE_S, PanelLink
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -80,7 +82,58 @@ class XPanelRelayView(HomeAssistantView):
         entry = self.hass.config_entries.async_get_entry(entry_id)
         if entry is None or entry.domain != DOMAIN:
             return web.Response(status=404, text="no such Crestron CIP entry")
+        if "direct" in request.query:
+            return await self._direct(request, entry)
+        hub = self.hass.data.get(DOMAIN, {}).get(entry_id)
+        if hub is None:
+            return web.Response(status=503, text=f"{entry.title} is not set up")
+        return await self._served(request, entry, hub)
 
+    async def _served(self, request: web.Request, entry, hub) -> web.StreamResponse:
+        """The panel served from the integration's own connection."""
+        if not hub.client.connected:
+            # The engine retries by itself; by then the processor may be back.
+            return web.Response(status=503, text=f"{entry.title} is not connected")
+        ws = web.WebSocketResponse(max_msg_size=0, heartbeat=None)
+        await ws.prepare(request)
+        tap = _Tap(entry.title)
+        count = len(hub.mux.links) + 1
+
+        async def send(ptype: int, body: bytes) -> None:
+            frame = p.frame(ptype, body)
+            tap.feed("processor->panel", frame)
+            await ws.send_bytes(frame)
+
+        link = PanelLink(hub.mux, send, f"{entry.title} #{count}", close=ws.close)
+        hub.mux.links.add(link)
+        _LOGGER.info("XPanel served for %s (%d open)", entry.title, len(hub.mux.links))
+        try:
+            await link.start()
+            while True:
+                try:
+                    msg = await ws.receive(timeout=PANEL_SILENCE_S)
+                except asyncio.TimeoutError:
+                    _LOGGER.info("XPanel %s went silent", link.name)
+                    break
+                if msg.type != WSMsgType.BINARY:
+                    break
+                tap.feed("panel->processor", msg.data)
+                if not await link.feed(msg.data):
+                    break
+        except (ConnectionResetError, RuntimeError) as err:
+            _LOGGER.debug("XPanel %s dropped: %s", link.name, err)
+        finally:
+            hub.mux.links.discard(link)
+            await ws.close()
+            _LOGGER.info("XPanel closed for %s (%d open)", entry.title, len(hub.mux.links))
+        return ws
+
+    async def _direct(self, request: web.Request, entry) -> web.StreamResponse:
+        """The panel's socket carried to the processor as it is.
+
+        A registration of its own at the IPID, so only for a processor that
+        shares one; kept to compare against the served path.
+        """
         use_ssl = entry.data.get(CONF_SSL, False)
         host = entry.data[CONF_HOST]
         port = entry.data.get(CONF_PORT) or (DEFAULT_TLS_PORT if use_ssl else DEFAULT_PORT)

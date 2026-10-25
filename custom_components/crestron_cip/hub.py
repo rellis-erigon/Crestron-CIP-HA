@@ -10,6 +10,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.util import dt as dt_util
 
 from .client import CIPClient
+from .xpanel_mux import XPanelMux
 from .const import SIGNAL_CONN, SIGNAL_NEW, SIGNAL_VALUE
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,6 +52,9 @@ class CrestronHub:
             on_connect=lambda: self._conn(True),
             on_disconnect=self._on_disconnect,
         )
+        # Browser XPanels, served over this one connection.
+        self.mux = XPanelMux(self.client.send_data, lambda: self.client.connect_response)
+        self.client.data_listeners.append(self.mux.from_processor)
 
     @property
     def unique_id(self) -> str:
@@ -67,11 +71,13 @@ class CrestronHub:
         self._stopping = True
         if self._reconnect_task is not None:
             self._reconnect_task.cancel()
+        self.mux.processor_lost()
         await self.client.close()
 
     @callback
     def _on_disconnect(self) -> None:
         self._conn(False)
+        self.mux.processor_lost()
         if self._stopping or self._reconnect_task is not None:
             return
         _LOGGER.warning("Lost the connection to %s; reconnecting", self.host)
