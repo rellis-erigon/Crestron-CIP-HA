@@ -88,6 +88,27 @@ card shows `default_screen`, or the busiest screen, with tabs to choose.
 Buttons are held for as long as they are pressed, so the program's volume
 ramps run as they do on the wall.
 
+## Running the panel's own XPanel
+
+A panel's `.zip` also carries Crestron's compiled browser XPanel
+(`container.swf`, the SmartGraphics engine and its theme). `import_panel`
+unpacks it beside the panel and returns its `xpanel_url`.
+`crestron-xpanel-card` runs it under [Ruffle](https://ruffle.rs), so the
+pages, graphics and logic are the panel's own rather than a redrawing:
+
+```yaml
+type: custom:crestron-xpanel-card
+device: Room Processor
+xpanel_url: /local/crestron-panels/Room/xpanel/container.swf
+```
+
+The XPanel speaks CIP over TCP, which a browser cannot open. Ruffle turns
+its socket into a websocket to `/api/crestron_cip/xpanel/<entry>`, and the
+integration carries it to the processor. **Each open card is its own
+connection at the entry's IPID**, so use it only on a processor that
+accepts a shared IPID, or give it an IPID of its own. Experimental: whether
+Ruffle runs a given XPanel build has to be tried in a browser.
+
 ## Actions
 
 | Action | Does |

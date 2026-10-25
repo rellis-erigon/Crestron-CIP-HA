@@ -164,3 +164,38 @@ def test_a_reference_list_draws_every_item_with_its_own_joins():
     assert roles(1) == {"button_o1_4011", "fader_o1_11"}
     assert roles(16) == {"button_o1_4161", "fader_o1_161"}
     assert zones["item_size"] == [200, 640]
+
+
+def xpanel_zip(extra=None):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("Annotation.ini", "")
+        archive.writestr("swf/container.swf", b"CWS")
+        archive.writestr("swf/Environment.xml", "<Environment/>")
+        archive.writestr("swf/themes/CT_Neo [System]/CT_Neo.swf", b"CWS")
+        for name, body in (extra or {}).items():
+            archive.writestr(name, body)
+    return buffer.getvalue()
+
+
+def test_the_compiled_xpanel_is_unpacked_whole_with_its_folder_names():
+    root = Path(tempfile.mkdtemp())
+    url = importer.export_xpanel(xpanel_zip(), root, "/local/crestron-panels/BGM")
+    assert url == "/local/crestron-panels/BGM/xpanel/container.swf"
+    # The engine asks for its theme by this exact name.
+    assert (root / "xpanel" / "themes" / "CT_Neo [System]" / "CT_Neo.swf").is_file()
+    assert (root / "xpanel" / "Environment.xml").is_file()
+    # Only the XPanel's own folder comes along.
+    assert not (root / "xpanel" / "Annotation.ini").exists()
+
+
+def test_an_xpanel_entry_cannot_climb_out_of_its_folder():
+    root = Path(tempfile.mkdtemp()) / "panel"
+    importer.export_xpanel(xpanel_zip({"swf/../../evil.txt": "x"}), root, "/u")
+    assert not (root.parent / "evil.txt").exists()
+    assert not (root / "evil.txt").exists()
+
+
+def test_a_project_without_an_xpanel_has_no_xpanel_url():
+    data = project(page("Main", 13, button("Go", 6)))
+    assert importer.export_xpanel(data, Path(tempfile.mkdtemp()), "/u") is None

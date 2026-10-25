@@ -187,6 +187,45 @@ def export_artwork(data: bytes, built: dict[str, Any], folder: Path, url: str) -
     return {"written": len(written), "missing": missing}
 
 
+XPANEL_ENTRY = "container.swf"
+
+
+def export_xpanel(data: bytes, folder: Path, url: str) -> str | None:
+    """Unpack the compiled XPanel, if the file carries one, as it was built.
+
+    A panel's .zip holds Crestron's own browser XPanel: `container.swf`, the
+    SmartGraphics engine, its theme and `Environment.xml`, side by side. Run
+    as it is, it draws the panel and runs its page logic exactly as the
+    panel does, so it is kept whole, with its folder names untouched (the
+    engine asks for `themes/<Theme> [System]/...` by name).
+
+    Returns the URL of `container.swf`, or None when there is none.
+    """
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        return None
+    with archive:
+        names = archive.namelist()
+        roots = [n[: -len(XPANEL_ENTRY)] for n in names
+                 if PurePosixPath(n).name == XPANEL_ENTRY]
+        if not roots:
+            return None
+        root = min(roots, key=len)
+        target = folder / "xpanel"
+        for name in names:
+            if not name.startswith(root) or name.endswith("/"):
+                continue
+            rel = PurePosixPath(name[len(root):])
+            # The archive is not ours: nothing may climb out of the folder.
+            if rel.is_absolute() or ".." in rel.parts:
+                continue
+            out = target.joinpath(*rel.parts)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(archive.read(name))
+    return f"{url}/xpanel/{XPANEL_ENTRY}"
+
+
 def write_panel(data: bytes, name: str, root: Path, url_root: str) -> dict[str, Any]:
     """Import a panel into `root/<slug>/`: its artwork and `panel.json`.
 
@@ -198,6 +237,7 @@ def write_panel(data: bytes, name: str, root: Path, url_root: str) -> dict[str, 
     folder = root / folder_name
     url = f"{url_root}/{folder_name}"
     art = export_artwork(data, built, folder, url)
+    xpanel_url = export_xpanel(data, folder, url)
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "panel.json").write_text(json.dumps(built, separators=(",", ":")))
     return {
@@ -207,4 +247,6 @@ def write_panel(data: bytes, name: str, root: Path, url_root: str) -> dict[str, 
         "page_joins": built["page_joins"],
         "default_screen": built["default_screen"],
         "artwork": art,
+        # Crestron's own compiled XPanel, for crestron-xpanel-card.
+        "xpanel_url": xpanel_url,
     }

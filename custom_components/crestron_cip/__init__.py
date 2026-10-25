@@ -51,6 +51,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await hub.async_stop()
         raise
     _register_services(hass)
+    if not hass.data.setdefault(f"{DOMAIN}_views", False):
+        # A view cannot be removed again, so it is registered once and looks
+        # the entry up per connection.
+        from homeassistant.components import websocket_api
+
+        from .xpanel_relay import XPanelRelayView, ws_xpanel_info
+        hass.http.register_view(XPanelRelayView(hass))
+        websocket_api.async_register_command(hass, ws_xpanel_info)
+        hass.data[f"{DOMAIN}_views"] = True
     entry.async_on_unload(entry.add_update_listener(_reload))
     return True
 
