@@ -38,6 +38,8 @@ PROGRAM_READY_BODY = b"\x02"
 HEARTBEAT_REPLY_BODY = b"\x00\x00"
 # A panel that has said nothing for this long is gone (it heartbeats every 15 s).
 PANEL_SILENCE_S = 60.0
+# How long a replayed page pulse is held.
+PAGE_PULSE_S = 0.1
 
 _DIGITAL = (C.DIGITAL, C.REPEAT_DIGITAL)
 _ANALOG = (C.ANALOG, C.X_GEN_ANALOG)
@@ -62,6 +64,9 @@ class StateImage:
 
     def __len__(self) -> int:
         return len(self._records)
+
+    def keys(self) -> list[tuple]:
+        return list(self._records)
 
     def clear(self) -> None:
         self._records.clear()
@@ -134,10 +139,13 @@ class PanelLink:
     """One XPanel, as the processor sees it."""
 
     def __init__(self, mux: "XPanelMux", send: Send, name: str,
-                 close: Callable[[], Awaitable[None]] | None = None) -> None:
+                 close: Callable[[], Awaitable[None]] | None = None,
+                 pages: frozenset[int] = frozenset()) -> None:
         self.mux = mux
         self._send = send
         self.close = close
+        # The digital joins that flip this panel's pages, from its project.
+        self.pages = pages
         self.name = name
         self.ready = False
         self._buffer = bytearray()
@@ -184,11 +192,29 @@ class PanelLink:
                 await self.send(p.PacketType.DATA, _command(CMD.END_OF_UPDATE))
                 await self.send(p.PacketType.DATA, _command(CMD.END_OF_QUERY))
                 self.ready = True
+                await self._current_page()
             elif sub in (CMD.SELECTIVE_UPDATE_REQUEST, CMD.PARTIAL_UPDATE):
                 # A page asking for its joins again as it loads.
                 await self._replay()
                 await self.send(p.PacketType.DATA, _command(CMD.END_OF_UPDATE))
             # END_QUERY_RESPONSE and the rest need no answer.
+
+    async def _current_page(self) -> None:
+        """Flip a newly connected panel to the page the processor last chose.
+
+        A processor pulses a page's join and the panel latches the page, so
+        a panel connecting later lands on its start page; a wall panel that
+        reboots does the same. A dashboard opens panels all day, so the
+        pulse is repeated to each new one, as the processor sent it.
+        """
+        join = self.mux.current_page(self.pages)
+        if join is None:
+            return
+        await self.send(p.PacketType.DATA, p.pack_cresnet(C.DIGITAL, p.pack_digital(join, True)))
+        await asyncio.sleep(PAGE_PULSE_S)
+        if join not in self.mux.held_digitals():
+            await self.send(p.PacketType.DATA,
+                            p.pack_cresnet(C.DIGITAL, p.pack_digital(join, False)))
 
     async def _replay(self) -> None:
         for payload in self.mux.image.payloads():
@@ -204,6 +230,10 @@ class XPanelMux:
         self._connect_response = connect_response
         self.image = StateImage()
         self.links: set[PanelLink] = set()
+        # digital join -> the order it last went high in, to know which page
+        # the processor flipped to last.
+        self._rises: dict[int, int] = {}
+        self._rise_count = 0
 
     def connect_response(self) -> bytes:
         # The processor's own answer to this IPID, so the panel negotiates
@@ -213,8 +243,29 @@ class XPanelMux:
     async def upstream(self, payload: bytes) -> None:
         await self._upstream(payload)
 
+    def held_digitals(self) -> set[int]:
+        """The ordinary digital joins the processor is holding high."""
+        return {key[2] + 1 for key in self.image.keys() if key[0] == b"" and key[1] == "d"}
+
+    def current_page(self, pages: frozenset[int]) -> int | None:
+        """Of `pages`, the join the processor raised most recently."""
+        seen = [(self._rises[j], j) for j in pages if j in self._rises]
+        return max(seen)[1] if seen else None
+
+    def _note_rises(self, payload: bytes) -> None:
+        held = self.held_digitals()
+        for ctype, data in p.iter_cresnet_records(payload):
+            if ctype not in _DIGITAL:
+                continue
+            for k in range(0, len(data) - 1, 2):
+                join, on = p.unpack_digital(data[k:k + 2])
+                if on and join not in held:
+                    self._rise_count += 1
+                    self._rises[join] = self._rise_count
+
     def from_processor(self, payload: bytes) -> None:
         """A DATA payload the processor sent: remember it, pass it on."""
+        self._note_rises(payload)
         self.image.feed(payload)
         records = list(p.iter_cresnet_records(payload))
         if not any(ctype == C.COMMAND for ctype, _ in records):

@@ -104,7 +104,11 @@ class XPanelRelayView(HomeAssistantView):
             tap.feed("processor->panel", frame)
             await ws.send_bytes(frame)
 
-        link = PanelLink(hub.mux, send, f"{entry.title} #{count}", close=ws.close)
+        # The panel's page joins (from its import), so a panel opened now
+        # can be flipped to the page the processor last showed.
+        pages = frozenset(
+            int(j) for j in request.query.get("pages", "").split(",") if j.strip().isdigit())
+        link = PanelLink(hub.mux, send, f"{entry.title} #{count}", close=ws.close, pages=pages)
         hub.mux.links.add(link)
         _LOGGER.info("XPanel served for %s (%d open)", entry.title, len(hub.mux.links))
         try:

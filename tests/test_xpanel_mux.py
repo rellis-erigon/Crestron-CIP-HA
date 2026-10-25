@@ -171,13 +171,36 @@ async def a_serial_in_pieces_is_replayed_whole() -> None:
     assert texts == [b"New"], texts
 
 
+async def a_new_panel_is_flipped_to_the_last_page() -> None:
+    import crestron_cip.xpanel_mux as m
+    m.PAGE_PULSE_S = 0
+    mux, _ = make_mux()
+    # The processor pulses page 13, later page 12; an unrelated button rises last.
+    for join in (13, 12):
+        mux.from_processor(data(C.DIGITAL, p.pack_digital(join, True)))
+        mux.from_processor(data(C.DIGITAL, p.pack_digital(join, False)))
+    mux.from_processor(data(C.DIGITAL, p.pack_digital(40, True)))
+    rec = Recorder()
+    link = PanelLink(mux, rec.send, "t", pages=frozenset({11, 12, 13, 14}))
+    await link.feed(p.frame(p.PacketType.DATA, data(C.COMMAND, b"\x00")))
+    after = rec.frames[[i for i, f in enumerate(rec.frames)
+                        if f[1] == data(C.COMMAND, b"\x1c")][0] + 1:]
+    assert after == [(p.PacketType.DATA, data(C.DIGITAL, p.pack_digital(12, True))),
+                     (p.PacketType.DATA, data(C.DIGITAL, p.pack_digital(12, False)))], after
+    # Without page joins, or before any flip, nothing is sent.
+    rec2 = Recorder()
+    await PanelLink(mux, rec2.send, "t").feed(p.frame(p.PacketType.DATA, data(C.COMMAND, b"\x00")))
+    assert rec2.frames[-1][1] == data(C.COMMAND, b"\x1c")
+
+
 async def main() -> None:
     tests = [a_panel_is_answered_as_the_processor_answered,
              a_join_back_at_its_default_is_not_replayed,
              presses_go_to_the_processor_and_heartbeats_do_not,
              feedback_reaches_every_ready_panel,
              losing_the_processor_closes_the_panels,
-             a_serial_in_pieces_is_replayed_whole]
+             a_serial_in_pieces_is_replayed_whole,
+             a_new_panel_is_flipped_to_the_last_page]
     for t in tests:
         await t()
         print(f"  ok  {t.__name__}")
