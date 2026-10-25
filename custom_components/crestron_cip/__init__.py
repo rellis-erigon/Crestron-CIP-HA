@@ -56,9 +56,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # the entry up per connection.
         from homeassistant.components import websocket_api
 
-        from .xpanel_relay import XPanelRelayView, ws_xpanel_info
+        from .xpanel_relay import XPanelRelayView, ws_xpanel_info, ws_xpanel_log
         hass.http.register_view(XPanelRelayView(hass))
         websocket_api.async_register_command(hass, ws_xpanel_info)
+        websocket_api.async_register_command(hass, ws_xpanel_log)
         hass.data[f"{DOMAIN}_views"] = True
     entry.async_on_unload(entry.add_update_listener(_reload))
     return True

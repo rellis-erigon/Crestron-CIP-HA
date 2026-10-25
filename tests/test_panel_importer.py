@@ -181,7 +181,7 @@ def xpanel_zip(extra=None):
 def test_the_compiled_xpanel_is_unpacked_whole_with_its_folder_names():
     root = Path(tempfile.mkdtemp())
     url = importer.export_xpanel(xpanel_zip(), root, "/local/crestron-panels/BGM")
-    assert url == "/local/crestron-panels/BGM/xpanel/container.swf"
+    assert url.startswith("/local/crestron-panels/BGM/xpanel/container.swf?v=")
     # The engine asks for its theme by this exact name.
     assert (root / "xpanel" / "themes" / "CT_Neo [System]" / "CT_Neo.swf").is_file()
     assert (root / "xpanel" / "Environment.xml").is_file()
@@ -199,3 +199,44 @@ def test_an_xpanel_entry_cannot_climb_out_of_its_folder():
 def test_a_project_without_an_xpanel_has_no_xpanel_url():
     data = project(page("Main", 13, button("Go", 6)))
     assert importer.export_xpanel(data, Path(tempfile.mkdtemp()), "/u") is None
+
+
+def cws(body: bytes) -> bytes:
+    import struct
+    import zlib
+    return b"CWS\x0e" + struct.pack("<I", len(body) + 8) + zlib.compress(body)
+
+
+def test_the_engine_is_patched_so_ruffle_can_run_it():
+    import zlib
+    engine = b"\x09flash.net\x0cSecureSocket\x10_useSecureSocket"
+    root = Path(tempfile.mkdtemp())
+    importer.export_xpanel(xpanel_zip({"swf/container.swf": cws(engine)}), root, "/u")
+    out = (root / "xpanel" / "container.swf").read_bytes()
+    body = zlib.decompress(out[8:])
+    # The class reference is swapped length for length; the field that
+    # merely contains the word is not touched.
+    assert body == b"\x09flash.net\x0cURLVariables\x10_useSecureSocket"
+    assert out[:8] == cws(engine)[:8]
+
+
+def test_environment_is_utf8_with_web_paths():
+    env = "<Path>themes\\Int_CT_Neo [System]\\Int_CT_Neo.xml</Path>".encode("utf-16")
+    root = Path(tempfile.mkdtemp())
+    importer.export_xpanel(xpanel_zip({"swf/Environment.xml": env}), root, "/u")
+    text = (root / "xpanel" / "Environment.xml").read_bytes()
+    assert text == b"<Path>themes/Int_CT_Neo [System]/Int_CT_Neo.xml</Path>"
+
+
+def test_every_file_also_answers_to_its_lowercase_name():
+    root = Path(tempfile.mkdtemp())
+    importer.export_xpanel(xpanel_zip({"swf/controls/BaseObjectsRSL.swf": b"CWS"}), root, "/u")
+    assert (root / "xpanel" / "controls" / "baseobjectsrsl.swf").is_file()
+    assert (root / "xpanel" / "controls" / "BaseObjectsRSL.swf").is_file()
+
+
+def test_a_new_import_gets_a_new_url():
+    a = importer.export_xpanel(xpanel_zip(), Path(tempfile.mkdtemp()), "/u")
+    b = importer.export_xpanel(xpanel_zip({"swf/container.swf": b"CWS2"}),
+                               Path(tempfile.mkdtemp()), "/u")
+    assert a != b

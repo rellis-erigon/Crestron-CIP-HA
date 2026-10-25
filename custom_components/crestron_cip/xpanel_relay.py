@@ -32,6 +32,38 @@ _LOGGER = logging.getLogger(__name__)
 RELAY_URL = "/api/crestron_cip/xpanel/{entry_id}"
 
 
+class _Tap:
+    """The opening of a relayed session, frame by frame, at debug level.
+
+    What a panel and its processor say to each other on connecting is the
+    part nobody has documented; this is how it is read off a live session.
+    Only the first frames each way are kept, then only non-join frames.
+    """
+
+    FIRST = 80
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.buffers = {"panel->processor": bytearray(), "processor->panel": bytearray()}
+        self.counts = {"panel->processor": 0, "processor->panel": 0}
+
+    def feed(self, way: str, data: bytes) -> None:
+        if not _LOGGER.isEnabledFor(logging.DEBUG):
+            return
+        buffer = self.buffers[way]
+        buffer.extend(data)
+        while len(buffer) >= 3:
+            length = (buffer[1] << 8) | buffer[2]
+            if len(buffer) < 3 + length:
+                break
+            frame = bytes(buffer[: 3 + length])
+            del buffer[: 3 + length]
+            self.counts[way] += 1
+            if self.counts[way] <= self.FIRST or frame[0] not in (0x05, 0x0D, 0x0E):
+                _LOGGER.debug("XPanel %s %s #%d type=0x%02X %s", self.name, way,
+                              self.counts[way], frame[0], frame[3:].hex())
+
+
 class XPanelRelayView(HomeAssistantView):
     """One websocket per running XPanel, one TCP connection behind each."""
 
@@ -70,9 +102,12 @@ class XPanelRelayView(HomeAssistantView):
         await ws.prepare(request)
         _LOGGER.info("XPanel relay open to %s:%s for %s", host, port, entry.title)
 
+        tap = _Tap(entry.title)
+
         async def upstream() -> None:
             async for msg in ws:
                 if msg.type == WSMsgType.BINARY:
+                    tap.feed("panel->processor", msg.data)
                     writer.write(msg.data)
                     await writer.drain()
                 elif msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
@@ -83,6 +118,7 @@ class XPanelRelayView(HomeAssistantView):
                 chunk = await reader.read(65536)
                 if not chunk:
                     break
+                tap.feed("processor->panel", chunk)
                 await ws.send_bytes(chunk)
 
         tasks = [asyncio.create_task(upstream()), asyncio.create_task(downstream())]
@@ -120,3 +156,21 @@ def ws_xpanel_info(hass: HomeAssistant, connection: websocket_api.ActiveConnecti
         "ipid": int(entry.data[CONF_IPID]),
         "relay": RELAY_URL.format(entry_id=entry.entry_id),
     })
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "crestron_cip/xpanel_log",
+    vol.Required("lines"): [str],
+})
+@callback
+def ws_xpanel_log(hass: HomeAssistant, connection: websocket_api.ActiveConnection,
+                  msg: dict) -> None:
+    """What Ruffle printed in the browser, for a card set to `debug: true`.
+
+    Ruffle reports an XPanel it cannot run only in the browser's console;
+    this puts it in Home Assistant's log, where whoever is diagnosing it
+    can read it without the console open.
+    """
+    for line in msg["lines"][:200]:
+        _LOGGER.warning("XPanel browser: %s", line[:2000])
+    connection.send_result(msg["id"])

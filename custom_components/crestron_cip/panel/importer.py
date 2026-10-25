@@ -11,10 +11,12 @@ Nothing here touches Home Assistant or the filesystem except
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import re
 import zipfile
+import zlib
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -189,17 +191,62 @@ def export_artwork(data: bytes, built: dict[str, Any], folder: Path, url: str) -
 
 XPANEL_ENTRY = "container.swf"
 
+# Ruffle has no flash.net.SecureSocket, and the engine names it in a type
+# check (`socket is SecureSocket`) on every connection, which throws there.
+# The constant is swapped, length for length, for a class Ruffle has; the
+# check then answers "not secure", which is right: the browser's socket is
+# plain and the relay holds any TLS to the processor.
+_SECURE_SOCKET = b"\x0cSecureSocket"
+_SECURE_SOCKET_STAND_IN = b"\x0cURLVariables"
+
+
+def _patch_swf(data: bytes) -> bytes:
+    """A SWF with its SecureSocket reference made safe under Ruffle."""
+    if data[:3] == b"CWS":
+        try:
+            body = zlib.decompress(data[8:])
+        except zlib.error:
+            return data  # not a SWF this can read; serve it as it came
+    elif data[:3] == b"FWS":
+        body = data[8:]
+    else:
+        return data  # LZMA-compressed; none of Crestron's are
+    if _SECURE_SOCKET not in body:
+        return data
+    body = body.replace(_SECURE_SOCKET, _SECURE_SOCKET_STAND_IN)
+    if data[:3] == b"CWS":
+        return data[:8] + zlib.compress(body, 9)
+    return data[:8] + body
+
+
+def _web_environment(data: bytes) -> bytes:
+    """Environment.xml as a browser engine can read it.
+
+    VTPro writes it in UTF-16 and names files with Windows backslashes;
+    Flash Player coped with both, Ruffle with neither.
+    """
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        text = data.decode("utf-16")
+    else:
+        text = data.decode("utf-8-sig", "replace")
+    text = re.sub(r"(?<=[\w\])])\\(?=[\w \[])", "/", text)
+    return text.encode("utf-8")
+
 
 def export_xpanel(data: bytes, folder: Path, url: str) -> str | None:
-    """Unpack the compiled XPanel, if the file carries one, as it was built.
+    """Unpack the compiled XPanel, if the file carries one, ready to run.
 
     A panel's .zip holds Crestron's own browser XPanel: `container.swf`, the
     SmartGraphics engine, its theme and `Environment.xml`, side by side. Run
     as it is, it draws the panel and runs its page logic exactly as the
     panel does, so it is kept whole, with its folder names untouched (the
-    engine asks for `themes/<Theme> [System]/...` by name).
+    engine asks for `themes/<Theme> [System]/...` by name). Three things are
+    changed so it runs under Ruffle from a web server: see `_patch_swf` and
+    `_web_environment`, and every file also answers to its lowercase name,
+    because the engine asks for some that way and Windows never minded.
 
-    Returns the URL of `container.swf`, or None when there is none.
+    Returns the URL of `container.swf`, versioned by its content so a
+    browser cannot keep running an older import, or None when there is none.
     """
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
@@ -213,6 +260,7 @@ def export_xpanel(data: bytes, folder: Path, url: str) -> str | None:
             return None
         root = min(roots, key=len)
         target = folder / "xpanel"
+        written: dict[PurePosixPath, bytes] = {}
         for name in names:
             if not name.startswith(root) or name.endswith("/"):
                 continue
@@ -220,10 +268,20 @@ def export_xpanel(data: bytes, folder: Path, url: str) -> str | None:
             # The archive is not ours: nothing may climb out of the folder.
             if rel.is_absolute() or ".." in rel.parts:
                 continue
-            out = target.joinpath(*rel.parts)
+            body = archive.read(name)
+            if rel.suffix.lower() == ".swf":
+                body = _patch_swf(body)
+            elif str(rel).lower() == "environment.xml":
+                body = _web_environment(body)
+            written[rel] = body
+    for rel, body in written.items():
+        for path in {rel, PurePosixPath(str(rel).lower())}:
+            out = target.joinpath(*path.parts)
             out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_bytes(archive.read(name))
-    return f"{url}/xpanel/{XPANEL_ENTRY}"
+            out.write_bytes(body)
+    container = next(body for rel, body in written.items() if rel.name == XPANEL_ENTRY)
+    version = hashlib.sha256(container).hexdigest()[:10]
+    return f"{url}/xpanel/{XPANEL_ENTRY}?v={version}"
 
 
 def write_panel(data: bytes, name: str, root: Path, url_root: str) -> dict[str, Any]:
