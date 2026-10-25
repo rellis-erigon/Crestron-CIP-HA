@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.22.3 — 2026-10-26
+
+- **Fixed**: the processor's connectivity sensor also wrote its state
+  from an executor thread when the connection came or went; it is now a
+  callback, as the join entities were made in 0.22.0.
+
 ## 0.22.2 — 2026-10-26
 
 - **Fixed**: a panel left open in another browser, or behind another

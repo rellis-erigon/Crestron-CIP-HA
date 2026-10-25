@@ -51,8 +51,13 @@ class CrestronConnectivity(BinarySensorEntity):
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(async_dispatcher_connect(
             self.hass, SIGNAL_CONN.format(entry=self._hub.entry.entry_id),
-            lambda _up: self.async_write_ha_state(),
+            self._handle_conn,
         ))
+
+    @callback
+    def _handle_conn(self, _up: bool) -> None:
+        # A callback, so the dispatcher runs it in the loop (see entity.py).
+        self.async_write_ha_state()
 
 
 class CrestronDigital(CrestronJoinEntity, BinarySensorEntity, RestoreEntity):
