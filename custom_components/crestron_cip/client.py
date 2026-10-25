@@ -16,6 +16,9 @@ from . import protocol as p
 
 _LOG = logging.getLogger(__name__)
 
+# What Crestron's XPanel appends to its CONNECT after the mode byte.
+XPANEL_CONNECT_TAIL = bytes.fromhex("fffff101")
+
 # feedback callback: (kind, join, value, smart_object) where kind is one of
 # "digital", "analog", "serial" and smart_object is 0 for an ordinary join.
 FeedbackCb = Callable[[str, int, object, int], None | Awaitable[None]]
@@ -119,8 +122,12 @@ class CIPClient:
 
     # -- registration / heartbeat ------------------------------------------
     async def _send_registration(self) -> None:
-        # CONNECT body: 00 00 00 00 00 <IPID> 0x40(MODE_HEARTBEAT) — verified live.
-        body = bytes((0x00, 0x00, 0x00, 0x00, 0x00, self.ipid & 0xFF, p.MODE_HEARTBEAT))
+        # CONNECT body as Crestron's own XPanel sends it, read off a live
+        # session: 00 00 00 00 00 <IPID> 40, then ff ff f1 01. Without the
+        # tail a DMPS answered 00 00 00 03; with it, 00 00 00 1f, the
+        # capabilities a panel served through xpanel_mux needs to be told.
+        body = bytes((0x00, 0x00, 0x00, 0x00, 0x00, self.ipid & 0xFF, p.MODE_HEARTBEAT)) \
+            + XPANEL_CONNECT_TAIL
         await self._send(p.PacketType.CONNECT, body)
 
     def _on_registration_response(self, payload: bytes) -> None:

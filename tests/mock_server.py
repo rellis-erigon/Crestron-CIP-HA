@@ -13,6 +13,7 @@ class MockProcessor:
     def __init__(self) -> None:
         self.received_joins: list[tuple[str, int, object]] = []
         self.registered_ipid: int | None = None
+        self.registered_body: bytes = b""
         self.registration_reply = bytes([0x00])
         self.answer_heartbeats = True
         self.server: asyncio.AbstractServer | None = None
@@ -51,6 +52,7 @@ class MockProcessor:
     async def _on_frame(self, ptype, payload, writer) -> None:
         if ptype == p.PacketType.CONNECT:
             self.registered_ipid = payload[5] if len(payload) >= 6 else None
+            self.registered_body = payload
             await self._send(writer, p.PacketType.CONNECTION_RESPONSE, self.registration_reply)
         elif ptype == p.PacketType.HEARTBEAT and self.answer_heartbeats:
             await self._send(writer, p.PacketType.HEARTBEAT_RESPONSE)

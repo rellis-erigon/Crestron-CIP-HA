@@ -20,6 +20,9 @@ async def run() -> None:
     await client.connect(timeout=5.0)
     assert client.connected, "client did not register"
     assert proc.registered_ipid == 0x0A, f"server saw ipid {proc.registered_ipid}"
+    # Registered as Crestron's XPanel registers, so the processor offers a
+    # panel's capabilities (and xpanel_mux can pass them on).
+    assert proc.registered_body == bytes.fromhex("00000000000a40fffff101"), proc.registered_body.hex()
     print(f"  ok  registered (server saw IPID 0x{proc.registered_ipid:02X})")
 
     await asyncio.sleep(0.2)
