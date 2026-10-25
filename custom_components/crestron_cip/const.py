@@ -12,7 +12,7 @@ DEFAULT_PORT = 41794
 DEFAULT_TLS_PORT = 41796
 DEFAULT_NAME = "Crestron"
 
-PLATFORMS = ["binary_sensor", "sensor", "number", "button"]
+PLATFORMS = ["binary_sensor", "sensor", "button"]
 
 # dispatcher signals
 SIGNAL_CONN = f"{DOMAIN}_conn_{{entry}}"              # connectivity changed

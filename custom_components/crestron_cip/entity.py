@@ -9,6 +9,11 @@ from homeassistant.helpers.entity import Entity
 from .const import DOMAIN, SIGNAL_CONN, SIGNAL_VALUE
 from .hub import CrestronHub
 
+# The bus letter in a join key. crestron-panel-card binds a panel's controls
+# by this key (`button_101` -> "d101", `level_211` -> "a211"), so pointing a
+# card at the processor's device binds every control at once.
+_BUS = {"digital": "d", "analog": "a", "serial": "s"}
+
 
 class CrestronJoinEntity(Entity):
     """Base for an entity bound to one feedback join."""
@@ -32,6 +37,10 @@ class CrestronJoinEntity(Entity):
     @property
     def available(self) -> bool:
         return self._hub.available
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        return {"join": f"{_BUS[self._kind]}{self._join}"}
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(async_dispatcher_connect(

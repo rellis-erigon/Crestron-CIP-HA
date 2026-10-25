@@ -19,10 +19,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     def _add(kind: str, join: int) -> None:
         if kind == "serial":
             async_add_entities([CrestronSerial(hub, join)])
+        elif kind == "analog":
+            async_add_entities([CrestronAnalog(hub, join)])
 
     entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_NEW.format(entry=entry.entry_id), _add))
-    for join in hub.known("serial"):
-        _add("serial", join)
+    for kind in ("serial", "analog"):
+        for join in hub.known(kind):
+            _add(kind, join)
 
 
 class CrestronSerial(CrestronJoinEntity, SensorEntity):
@@ -31,3 +34,20 @@ class CrestronSerial(CrestronJoinEntity, SensorEntity):
     @property
     def native_value(self) -> str | None:
         return self._hub.client.serial.get(self._join)
+
+
+class CrestronAnalog(CrestronJoinEntity, SensorEntity):
+    """An analog join, read-only.
+
+    Analog joins were writable numbers until 0.16.0. A number lets anyone
+    with the entity in front of them write a raw 16-bit value to the
+    processor; the panel never does that, it presses the program's own
+    up/down joins and lets the program ramp. Writes now go through the
+    `set_analog` action, deliberately.
+    """
+
+    _kind = "analog"
+
+    @property
+    def native_value(self) -> int | None:
+        return self._hub.client.analog.get(self._join)

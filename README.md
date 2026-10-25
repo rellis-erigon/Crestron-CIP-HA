@@ -39,7 +39,7 @@ Add one entry per processor.
 | `binary_sensor` … connection | One per processor |
 | `binary_sensor` | Each digital feedback join |
 | `sensor` | Each serial (text) feedback join |
-| `number` | Each analog join. **Disabled by default**: changing one writes it to the processor |
+| `sensor` | Each analog join (a level, 0–65535), read-only |
 | `button` | Each press join in the project file |
 
 **A processor only reports joins that are not at their default value.**
@@ -49,6 +49,24 @@ change. Operate the system and watch them arrive.
 
 SmartObject lists (source lists, zone lists) are decoded into their serial
 joins.
+
+Every join entity carries a `join` attribute naming its bus and number:
+`d101`, `a211`, `s1`.
+
+## Using it as the panel
+
+`crestron-panel-card` (in the HA-rellis-erigon-Cards collection) draws a
+panel from its own project file. Point it at a processor's device and it
+binds every control by its `join` attribute. Tapping a control then sends
+the join the panel itself would: the panel's volume up presses the
+program's volume-up join and lets the program ramp, rather than writing a
+level.
+
+```yaml
+type: custom:crestron-panel-card
+device: Function Room 1 & 2      # the processor's device name
+panel: <faceplate generated from the panel project>
+```
 
 ## Actions
 

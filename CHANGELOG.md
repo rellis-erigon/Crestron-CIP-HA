@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.16.0 — 2026-10-25
+
+- Every join entity carries a `join` attribute (`d101`, `a211`, `s1`).
+  `crestron-panel-card` binds a panel's controls by it, so a card pointed
+  at a processor's device works like the panel.
+- **Changed**: analog joins are read-only sensors rather than disabled
+  numbers. A number let anyone write a raw 16-bit value to the processor,
+  which the panel never does; writes go through `set_analog` instead. The
+  old `number.*_analog_*` entities are removed.
+
 ## 0.15.1 — 2026-10-25
 
 - **Fix**: Setup failed on every processor with "Platform
