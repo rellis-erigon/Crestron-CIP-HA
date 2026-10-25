@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.22.1 — 2026-10-26
+
+- **Fixed**: a panel at an IPID the processor talks to in EXTENDED_DATA
+  (0x12) showed none of its joins. The mux re-wrapped those records as
+  DATA, which the XPanel engine ignores. Each record now keeps the framing
+  it came in, in the replay and in live updates, and a panel's own
+  EXTENDED_DATA goes upstream as it was sent.
+- Configure picks the panel file from a drop-down of the `.zip`/`.c3p`
+  files already on the box (kept copies first, then `/share` and
+  `/media`); a path can still be typed, or a file uploaded.
+
+## 0.22.0 — 2026-10-26
+
+- **New**: several panels per processor, one per room. Configure is a
+  menu: add or replace a room's panel (room, IPID in hex, file) or remove
+  one. Each room panel is a device of its own under its processor, and
+  the Crestron XPanel card picks that device.
+- A panel at an IPID other than the entry's own gets a registration of
+  its own at that IPID, used only to serve that room's panels. Not every
+  processor shares an IPID with a live panel; remove the panel if the
+  wall panel stops responding.
+- An entry's single panel from 0.21 reads as one room at the entry's IPID.
+- `crestron_cip/xpanel_info` takes `device_id` (or `entry_id` + `panel`)
+  and returns the panel's IPID; the relay takes `?panel=`.
+- **Fixed**: the connection-status update ran outside the event loop.
+
+## 0.21.1 — 2026-10-25
+
+- The XPanel relay checks a per-entry key instead of a signed path. A
+  signed path dies when Home Assistant restarts, so open panels could not
+  reconnect and retried with a stale signature every few seconds.
+
+## 0.21.0 — 2026-10-25
+
+- **New**: give a processor its panel from the UI: Configure takes the
+  panel's `.zip` as an upload (or a path), imports it for the browser and
+  keeps a copy under `crestron_cip/` in the config folder.
+
+## 0.20.0 — 2026-10-25
+
+- **New**: any number of browser XPanels are served from the
+  integration's one connection (`xpanel_mux`): a state image of what the
+  processor has said, replayed to each panel that connects, with live
+  updates fanned out and presses passed upstream.
+- A newly opened panel is flipped to the page the processor last chose.
+- Registration carries the XPanel's own tail (`ff ff f1 01`); without it
+  a DMPS answers with a capability the panel engine will not proceed on.
+
+## 0.19.0 — 2026-10-25
+
+- **New**: run the panel's own compiled XPanel (`container.swf`) under
+  Ruffle, through a websocket relay to the processor. The import makes it
+  ready for a browser (UTF-8 environment, lowercase file aliases, a
+  SecureSocket reference Ruffle lacks, and a versioned URL).
+
 ## 0.18.0 — 2026-10-25
 
 - **New**: Subpage Reference Lists are imported as every item they show.
