@@ -36,6 +36,7 @@ jobs:
           python3 tests/test_integration.py
           python3 tests/test_connection.py
           python3 tests/test_project_loader.py
+          python3 tests/run_panel_tests.py
 
   hassfest:
     name: hassfest
