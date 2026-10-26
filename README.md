@@ -91,10 +91,14 @@ ramps run as they do on the wall.
 ## Running the panel's own XPanel
 
 The panel's `.zip` carries Crestron's compiled browser XPanel
-(`container.swf`, the SmartGraphics engine and its theme).
-`crestron-xpanel-card` (in the HA-rellis-erigon-Cards collection) runs it
-under [Ruffle](https://ruffle.rs), so the pages, graphics and logic are the
-panel's own rather than a redrawing.
+(`container.swf`, the SmartGraphics engine and its theme). The
+**Crestron XPanel card** runs it under [Ruffle](https://ruffle.rs), so the
+pages, graphics and logic are the panel's own rather than a redrawing.
+
+**The card is built in.** The integration serves the card and Ruffle
+itself (`/crestron_cip/frontend/`, see `frontend/README.md`) and loads the
+card on every Home Assistant page. There is no dashboard resource to add
+and nothing else to install, and it works on a site with no internet.
 
 ### Adding a room's panel
 

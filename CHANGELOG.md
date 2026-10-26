@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.23.0 — 2026-10-26
+
+- **New**: the Crestron XPanel card is built in. The integration ships the
+  card and Ruffle 0.7.1 under `frontend/`, serves them at
+  `/crestron_cip/frontend/`, and loads the card on every page: no
+  dashboard resource, no separate card install, no internet needed. A
+  `crestron-xpanel-card.js` resource added by hand can be removed; if it
+  stays, the second copy stands down.
+
 ## 0.22.3 — 2026-10-26
 
 - **Fixed**: the processor's connectivity sensor also wrote its state

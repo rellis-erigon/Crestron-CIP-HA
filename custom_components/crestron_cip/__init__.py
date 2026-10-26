@@ -22,6 +22,36 @@ from .hub import CrestronHub
 
 _LOGGER = logging.getLogger(__name__)
 
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+# The card and Ruffle, shipped with the integration (see frontend/README.md).
+FRONTEND_URL = f"/{DOMAIN}/frontend"
+FRONTEND_DIR = Path(__file__).parent / "frontend"
+CARD_FILE = "crestron-xpanel-card.js"
+
+
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Serve the XPanel card and Ruffle, and load the card on every page.
+
+    No dashboard resource is needed. Loaded on every page rather than with a
+    dashboard, a panel set to run in the background starts whichever page
+    Home Assistant opens on.
+    """
+    import hashlib
+
+    from homeassistant.components.frontend import add_extra_js_url
+    from homeassistant.components.http import StaticPathConfig
+
+    def card_version() -> str:
+        return hashlib.sha256((FRONTEND_DIR / CARD_FILE).read_bytes()).hexdigest()[:10]
+
+    version = await hass.async_add_executor_job(card_version)
+    # No long cache: a new card or Ruffle must reach browsers on the next load.
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(FRONTEND_URL, str(FRONTEND_DIR), False)])
+    add_extra_js_url(hass, f"{FRONTEND_URL}/{CARD_FILE}?v={version}")
+    return True
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     use_ssl = entry.data.get(CONF_SSL, False)
