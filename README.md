@@ -90,49 +90,102 @@ ramps run as they do on the wall.
 
 ## Running the panel's own XPanel
 
-The short way, all in Home Assistant:
+The panel's `.zip` carries Crestron's compiled browser XPanel
+(`container.swf`, the SmartGraphics engine and its theme).
+`crestron-xpanel-card` (in the HA-rellis-erigon-Cards collection) runs it
+under [Ruffle](https://ruffle.rs), so the pages, graphics and logic are the
+panel's own rather than a redrawing.
+
+### Adding a room's panel
+
+A processor usually serves several touch panels, one per room, each at its
+own IPID. Give it each one:
 
 1. **Settings → Devices & services → Crestron CIP → (the processor) →
-   Configure → Add or replace a room's panel.** Name the room, give the
-   IPID its panel has in the processor's IP table, and upload the panel's
-   `.zip` (or give a path under `/share`). It is imported, made ready for
-   the browser, and kept with the configuration. Repeat for each room: a
-   processor holds as many panels as it has rooms.
-2. **Dashboard → Add card → Crestron XPanel Card**, and pick the room's
-   panel. Each panel is a device of its own, under its processor.
+   Configure → Add or replace a room's panel.**
+2. Fill in:
+   - **Room**: what the room is called. The panel's device is named after it.
+   - **IPID**: the IPID that room's panel has in the processor's IP table,
+     in hex as the table writes it (`03`, `04`, `0A`).
+   - **Panel file**: pick it from the drop-down, which lists the `.zip` and
+     `.c3p` files already on Home Assistant (the copies kept from earlier
+     uploads first, then `/share` and `/media`). Or type a path, or upload
+     the file below.
+3. **Submit.** The panel is imported, made ready for a browser, and a copy
+   of the file is kept under `crestron_cip/` in the config folder.
 
-A panel at an IPID other than the entry's own makes the integration
-register at that IPID too, and serve that room's panels from it. Not every
-processor lets two connections share an IPID with a real panel; if the
-room's wall panel stops responding, remove the panel again (Configure →
-Remove, or delete its device).
+Each room's panel becomes a **device of its own** under its processor
+(model `XPanel IPID 0x04`, for example). Giving a room that already has a
+panel a new file replaces it. To remove one, use **Configure → Remove a
+room's panel**, or delete its device.
 
-The rest of this section is what that does, and the manual route.
+### Adding the card
 
-A panel's `.zip` also carries Crestron's compiled browser XPanel
-(`container.swf`, the SmartGraphics engine and its theme). `import_panel`
-unpacks it beside the panel and returns its `xpanel_url`.
-`crestron-xpanel-card` runs it under [Ruffle](https://ruffle.rs), so the
-pages, graphics and logic are the panel's own rather than a redrawing:
+**Dashboard → Edit → Add card → Crestron XPanel Card**, and pick the room's
+panel device. In YAML:
 
 ```yaml
 type: custom:crestron-xpanel-card
-device: Room Processor
-xpanel_url: /local/crestron-panels/Room/xpanel/container.swf
+device: Room 1 panel        # the room panel's device (name or id)
+scale: 0.75                 # a fraction of the size that fits the window
+background: true            # load it as soon as Home Assistant opens
 ```
+
+| Option | Default | Does |
+|--------|---------|------|
+| `device` | — | The room panel's device. A processor's own device shows its first panel |
+| `entry_id`, `panel` | — | Instead of `device`: the processor's config entry and the panel's id |
+| `scale` | `1` | 0.1–1, a fraction of the size that fits the window |
+| `fit_window` | `true` | Fit both the window's width and height; `false` fills the card's width only |
+| `background` | `false` | Start the panel when Home Assistant opens in a browser, on any dashboard, so it is already loaded when its view is shown |
+| `title` | — | A heading above the panel |
+| `xpanel_url` | the room's panel | A `container.swf` to run instead of the imported one |
+| `debug` | `false` | Copy Ruffle's console into Home Assistant's log, for diagnosing a panel that will not start |
+
+### How it runs
 
 The XPanel speaks CIP over TCP, which a browser cannot open. Ruffle turns
 its socket into a websocket to `/api/crestron_cip/xpanel/<entry>`, and the
 integration serves it **from its own connection**: it answers the panel as
-the processor does and replays what the processor has reported, then passes
-presses up and changes down. However many browsers have the panel open,
-the processor sees one registration at the IPID.
+the processor does, replays what the processor has reported, then passes
+presses up and changes down.
 
-A panel keeps running while you move between views, so coming back does
-not reload it. Experimental: whether Ruffle runs a given XPanel build has
-to be tried in a browser. `import_panel` makes the changes a Crestron
-XPanel needs to run there (UTF-8 `Environment.xml`, web paths, lowercase
-file names, and Ruffle's missing `SecureSocket`).
+- **Any number of browsers and users.** However many have a room's panel
+  open, the processor sees one registration at that room's IPID. Every
+  copy shows the same page, text and button states, and a press in one
+  shows in all. A panel opened later lands on the page the processor last
+  chose.
+- **A room at another IPID** gets a registration of its own at that IPID,
+  used only for that room's panels (no entities). A processor can send one
+  IPID its joins as DATA and another as EXTENDED_DATA; each panel is given
+  them as its own IPID was.
+- **Across views.** A panel keeps running while you move between views,
+  so coming back does not reload it.
+- **In a hidden window.** A browser stops running the panel in a window or
+  tab that is not showing. The relay pings the websocket rather than
+  waiting on the panel's own heartbeats, so a hidden panel is not closed;
+  it carries on when shown.
+- **Across restarts.** Each processor has a panel key of its own, kept in
+  its config entry, so an open panel reconnects by itself after Home
+  Assistant restarts.
+
+Each browser still runs its own copy: the XPanel is a program that runs in
+the browser, and loads in a few seconds. `background: true` does that when
+Home Assistant opens rather than when the view is first shown.
+
+`import_panel` makes the changes a Crestron XPanel needs to run in Ruffle:
+UTF-8 `Environment.xml`, web paths, lowercase file names, Ruffle's missing
+`SecureSocket`, and a versioned URL so a browser never runs a stale copy.
+
+### When a panel will not start
+
+| Symptom | Cause |
+|---------|-------|
+| `Environment.zip … 404` in the log with `debug: true` | Normal: the engine looks for a zipped copy first, then loads `Environment.xml` |
+| "This processor has no panel yet" | Add one under Configure, then pick the room's device in the card |
+| Panel stays on "Loading Interface" | The processor is not connected (the panel retries by itself), or the panel is at an IPID the program does not define |
+| The real wall panel stops responding after adding a room | That processor will not share an IPID with a live panel. Remove the room's panel, or give Home Assistant a spare IPID in the program |
+| A panel reloads after a long time in the background | The browser unloaded the tab to save memory. In Chrome, add Home Assistant to *Always keep these sites active* |
 
 ## Actions
 
