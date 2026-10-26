@@ -123,6 +123,7 @@ async def _sync_panels(hass: HomeAssistant, entry: ConfigEntry) -> None:
     panels = panels_of(entry.options, hub.ipid)
     await hub.async_sync_panels({int(p["ipid"]) for p in panels})
     registry = dr.async_get(hass)
+    processor = registry.async_get_device(identifiers={(DOMAIN, hub.unique_id)})
     wanted = set()
     for panel in panels:
         ident = panel_device_identifier(entry.entry_id, panel["id"])
@@ -133,12 +134,17 @@ async def _sync_panels(hass: HomeAssistant, entry: ConfigEntry) -> None:
             name=_panel_device_name(hub.name, panel["name"]),
             manufacturer="Crestron",
             model=f"XPanel IPID 0x{int(panel['ipid']):02X}",
-            via_device=(DOMAIN, hub.unique_id),
         )
         name = _panel_device_name(hub.name, panel["name"])
+        changes: dict = {}
         if device.name != name:
             # async_get_or_create keeps the name a device already had.
-            registry.async_update_device(device.id, name=name)
+            changes["name"] = name
+        if processor is not None and device.via_device_id != processor.id:
+            # By id: `via_device` (an identifier) is deprecated.
+            changes["via_device_id"] = processor.id
+        if changes:
+            registry.async_update_device(device.id, **changes)
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
         ours = {i for i in device.identifiers if i[0] == DOMAIN and ":" in i[1]}
         if ours and not ours & wanted:

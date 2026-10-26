@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.23.1 — 2026-10-26
+
+- Room panel devices name their processor by device id rather than the
+  deprecated `via_device` identifier.
+
 ## 0.23.0 — 2026-10-26
 
 - **New**: the Crestron XPanel card is built in. The integration ships the
