@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.23.2 — 2026-10-28
+
+- **Fixed**: "Configuration error" in place of the XPanel card on iPads and
+  iPhones before iOS 18.1. Home Assistant gives those browsers its legacy
+  build, which loads no module an integration adds; a small classic
+  script now imports the card for them.
+- **Fixed**: Safari on an iPhone reloading the page over and over. Every
+  panel set to `background: true` started on the phone too, each a player
+  with its own copy of the engine. On phones and tablets no panel starts in
+  the background, and only the panel on screen keeps running.
+
 ## 0.23.1 — 2026-10-26
 
 - Room panel devices name their processor by device id rather than the

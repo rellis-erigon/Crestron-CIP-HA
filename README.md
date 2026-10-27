@@ -177,6 +177,12 @@ Each browser still runs its own copy: the XPanel is a program that runs in
 the browser, and loads in a few seconds. `background: true` does that when
 Home Assistant opens rather than when the view is first shown.
 
+Phones and tablets are the exception. Each panel is a player with its own
+copy of the engine, and Safari on iOS closes a tab that holds more than one
+or two. On a phone or tablet (or any browser reporting under 4 GB of
+memory) no panel starts in the background, and opening a panel closes the
+ones no card is showing; the one on screen loads as its view opens.
+
 `import_panel` makes the changes a Crestron XPanel needs to run in Ruffle:
 UTF-8 `Environment.xml`, web paths, lowercase file names, Ruffle's missing
 `SecureSocket`, and a versioned URL so a browser never runs a stale copy.
@@ -189,6 +195,8 @@ UTF-8 `Environment.xml`, web paths, lowercase file names, Ruffle's missing
 | "This processor has no panel yet" | Add one under Configure, then pick the room's device in the card |
 | Panel stays on "Loading Interface" | The processor is not connected (the panel retries by itself), or the panel is at an IPID the program does not define |
 | The real wall panel stops responding after adding a room | That processor will not share an IPID with a live panel. Remove the room's panel, or give Home Assistant a spare IPID in the program |
+| "Configuration error" in place of the card on an iPad or iPhone | Home Assistant 2026.10 gives browsers before iOS 18.1 its legacy build, which loaded no card before 0.23.2. Update, then reload the page |
+| Safari on an iPhone keeps reloading the page | Before 0.23.2 every background panel started on the phone too, more than Safari allows a tab. Update, then reload |
 | A panel reloads after a long time in the background | The browser unloaded the tab to save memory. In Chrome, add Home Assistant to *Always keep these sites active* |
 
 ## Actions

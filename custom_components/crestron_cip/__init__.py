@@ -50,6 +50,9 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     await hass.http.async_register_static_paths(
         [StaticPathConfig(FRONTEND_URL, str(FRONTEND_DIR), False)])
     add_extra_js_url(hass, f"{FRONTEND_URL}/{CARD_FILE}?v={version}")
+    # Browsers on Home Assistant's legacy build (older iPads) load no
+    # modules from here; a classic script imports the card for them.
+    add_extra_js_url(hass, f"{FRONTEND_URL}/legacy-loader.js?v={version}", es5=True)
     return True
 
 
