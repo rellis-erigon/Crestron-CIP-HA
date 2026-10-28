@@ -161,6 +161,7 @@ class XPanelRelayView(HomeAssistantView):
             _LOGGER.debug("XPanel %s dropped: %s", link.name, err)
         finally:
             mux.links.discard(link)
+            link.stop()
             await ws.close()
             _LOGGER.info("XPanel closed for %s (%d open)", title, len(mux.links))
         return ws

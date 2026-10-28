@@ -68,7 +68,9 @@ class PanelUplink:
             _LOGGER.info("Registered for panels at %s IPID %02X", self.hub.host, self.ipid)
             delay = 5
             await self._lost.wait()
-            _LOGGER.warning("Lost panel IPID %02X on %s; reconnecting", self.ipid, self.hub.host)
+            if not self.hub.hass.is_stopping:
+                _LOGGER.warning("Lost panel IPID %02X on %s; reconnecting",
+                                self.ipid, self.hub.host)
             await self.client.close()
             await asyncio.sleep(delay)
 
@@ -154,7 +156,9 @@ class CrestronHub:
     def _on_disconnect(self) -> None:
         self._conn(False)
         self.mux.processor_lost()
-        if self._stopping or self._reconnect_task is not None:
+        # Home Assistant shutting down closes every socket; that is not a
+        # lost processor, and warning about it buried the real ones.
+        if self._stopping or self._reconnect_task is not None or self.hass.is_stopping:
             return
         _LOGGER.warning("Lost the connection to %s; reconnecting", self.host)
         self._reconnect_task = self.entry.async_create_background_task(

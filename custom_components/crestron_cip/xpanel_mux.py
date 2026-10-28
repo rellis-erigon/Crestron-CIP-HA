@@ -45,6 +45,11 @@ HEARTBEAT_REPLY_BODY = b"\x00\x00"
 PANEL_PING_S = 30.0
 # How long a replayed page pulse is held.
 PAGE_PULSE_S = 0.1
+# Frames a panel may have waiting. A browser that has stopped reading its
+# websocket (a frozen tab, a phone gone to sleep mid-send) would otherwise
+# be sent an ever longer backlog; past this it is closed, and reconnects to
+# a fresh image, which is both quicker and correct.
+PANEL_BACKLOG_MAX = 5000
 
 _DIGITAL = (C.DIGITAL, C.REPEAT_DIGITAL)
 _ANALOG = (C.ANALOG, C.X_GEN_ANALOG)
@@ -150,7 +155,13 @@ Send = Callable[[int, bytes], Awaitable[None]]
 
 
 class PanelLink:
-    """One XPanel, as the processor sees it."""
+    """One XPanel, as the processor sees it.
+
+    Everything for the panel goes through one queue and one writer, so it
+    arrives in the order it was meant: a page pulse after the joins it
+    shows, a serial's pieces in sequence, the replay before what changed
+    after it.
+    """
 
     def __init__(self, mux: "XPanelMux", send: Send, name: str,
                  close: Callable[[], Awaitable[None]] | None = None,
@@ -163,9 +174,64 @@ class PanelLink:
         self.name = name
         self.ready = False
         self._buffer = bytearray()
+        self._outbox: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue(PANEL_BACKLOG_MAX)
+        self._writer: asyncio.Task | None = None
+        self._closing = False
+
+    def put(self, ptype: int, body: bytes = b"") -> None:
+        """Queue a frame for the panel, in order, without waiting."""
+        if self._closing:
+            return
+        try:
+            self._outbox.put_nowait((ptype, body))
+        except asyncio.QueueFull:
+            _LOG.warning("XPanel %s stopped reading (%d frames waiting); closing it "
+                         "so it reconnects", self.name, PANEL_BACKLOG_MAX)
+            self._shut()
+            return
+        if self._writer is None or self._writer.done():
+            self._writer = asyncio.ensure_future(self._write())
 
     async def send(self, ptype: int, body: bytes = b"") -> None:
-        await self._send(ptype, body)
+        self.put(ptype, body)
+
+    async def flushed(self) -> None:
+        """Wait until everything queued so far has been sent."""
+        await self._outbox.join()
+
+    async def _write(self) -> None:
+        # Runs while there is something to send; `put` starts it again.
+        # Nothing is awaited between the empty check and returning, so a
+        # frame queued meanwhile is never stranded.
+        while not self._outbox.empty():
+            ptype, body = self._outbox.get_nowait()
+            try:
+                await self._send(ptype, body)
+            except Exception as err:  # noqa: BLE001 - a gone browser
+                _LOG.debug("XPanel %s did not take a frame: %s", self.name, err)
+                self._outbox.task_done()
+                self._shut()
+                return
+            self._outbox.task_done()
+
+    def _shut(self) -> None:
+        """Stop sending and close the panel's socket; it reconnects."""
+        if self._closing:
+            return
+        self._closing = True
+        self.ready = False
+        while not self._outbox.empty():
+            self._outbox.get_nowait()
+            self._outbox.task_done()
+        if self.close is not None:
+            asyncio.ensure_future(self.close())
+
+    def stop(self) -> None:
+        """The socket has closed: drop what is waiting and end the writer."""
+        self._closing = True
+        self.ready = False
+        if self._writer is not None:
+            self._writer.cancel()
 
     async def start(self) -> None:
         await self.send(p.PacketType.PROGRAM_READY, PROGRAM_READY_BODY)
@@ -202,17 +268,20 @@ class PanelLink:
                 continue
             sub = data[0] if data else None
             if sub == CMD.UPDATE_REQUEST:
-                # Answered as the processor answered it.
-                await self.send(p.PacketType.DATA, _command(CMD.UPDATE_REQUEST))
-                await self._replay()
-                await self.send(p.PacketType.DATA, _command(CMD.END_OF_UPDATE))
-                await self.send(p.PacketType.DATA, _command(CMD.END_OF_QUERY))
+                # Answered as the processor answered it. The image is queued
+                # and the panel marked ready in one step, with nothing
+                # awaited between: a change the processor sends meanwhile
+                # lands after the image, never in a gap where it was lost.
+                self.put(p.PacketType.DATA, _command(CMD.UPDATE_REQUEST))
+                self._replay()
+                self.put(p.PacketType.DATA, _command(CMD.END_OF_UPDATE))
+                self.put(p.PacketType.DATA, _command(CMD.END_OF_QUERY))
                 self.ready = True
                 await self._current_page()
             elif sub in (CMD.SELECTIVE_UPDATE_REQUEST, CMD.PARTIAL_UPDATE):
                 # A page asking for its joins again as it loads.
-                await self._replay()
-                await self.send(p.PacketType.DATA, _command(CMD.END_OF_UPDATE))
+                self._replay()
+                self.put(p.PacketType.DATA, _command(CMD.END_OF_UPDATE))
             # END_QUERY_RESPONSE and the rest need no answer.
 
     async def _current_page(self) -> None:
@@ -232,9 +301,9 @@ class PanelLink:
             await self.send(p.PacketType.DATA,
                             p.pack_cresnet(C.DIGITAL, p.pack_digital(join, False)))
 
-    async def _replay(self) -> None:
+    def _replay(self) -> None:
         for ptype, payload in self.mux.image.payloads():
-            await self.send(ptype, payload)
+            self.put(ptype, payload)
 
 
 class XPanelMux:
@@ -297,14 +366,7 @@ class XPanelMux:
         for link in list(self.links):
             if link.ready:
                 for body in out:
-                    asyncio.ensure_future(self._safe_send(link, body, ptype))
-
-    async def _safe_send(self, link: PanelLink, payload: bytes,
-                         ptype: int = p.PacketType.DATA) -> None:
-        try:
-            await link.send(ptype, payload)
-        except Exception as err:  # noqa: BLE001
-            _LOG.debug("XPanel %s did not take an update: %s", link.name, err)
+                    link.put(ptype, body)
 
     def processor_lost(self) -> None:
         """The image is stale from here; the next connection rebuilds it.
@@ -315,6 +377,4 @@ class XPanelMux:
         """
         self.image.clear()
         for link in list(self.links):
-            link.ready = False
-            if link.close is not None:
-                asyncio.ensure_future(link.close())
+            link._shut()

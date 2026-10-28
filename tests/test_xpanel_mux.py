@@ -88,6 +88,7 @@ async def a_panel_is_answered_as_the_processor_answered() -> None:
     await link.start()
     await link.feed(p.frame(p.PacketType.CONNECT, bytes.fromhex("00000000000340fffff101")))
     await link.feed(p.frame(p.PacketType.DATA, data(C.COMMAND, b"\x00")))
+    await link.flushed()
     kinds = [t for t, _ in rec.frames]
     assert kinds[0] == p.PacketType.PROGRAM_READY and rec.frames[0][1] == b"\x02", rec.frames[0]
     assert rec.frames[1] == (p.PacketType.CONNECTION_RESPONSE, bytes.fromhex("0000001f"))
@@ -121,6 +122,7 @@ async def presses_go_to_the_processor_and_heartbeats_do_not() -> None:
     await link.feed(p.frame(p.PacketType.DATA, press))
     await link.feed(p.frame(p.PacketType.HEARTBEAT, b"\x00\x00"))
     await link.feed(p.frame(p.PacketType.DATA, data(C.COMMAND, b"\x1d")))
+    await link.flushed()
     assert sent == [press], sent
     assert rec.frames == [(p.PacketType.HEARTBEAT_RESPONSE, b"\x00\x00")], rec.frames
 
@@ -128,22 +130,28 @@ async def presses_go_to_the_processor_and_heartbeats_do_not() -> None:
 async def feedback_reaches_every_ready_panel() -> None:
     mux, _ = make_mux()
     a, b, late = Recorder(), Recorder(), Recorder()
+    links = []
     for r in (a, b, late):
         link = PanelLink(mux, r.send, "t")
         mux.links.add(link)
+        links.append(link)
         if r is not late:
             await link.feed(p.frame(p.PacketType.DATA, data(C.COMMAND, b"\x00")))
+    for link in links:
+        await link.flushed()
     before = len(a.frames)
     change = data(C.DIGITAL, p.pack_digital(13, True))
     mux.from_processor(change)
-    await asyncio.sleep(0)
+    for link in links:
+        await link.flushed()
     assert a.frames[before:] == [(p.PacketType.DATA, change)], a.frames[before:]
     assert (p.PacketType.DATA, change) in b.frames
     # A panel still connecting gets it in its replay instead.
     assert late.frames == []
     # The processor's own update markers are not passed on.
     mux.from_processor(data(C.COMMAND, b"\x16"))
-    await asyncio.sleep(0)
+    for link in links:
+        await link.flushed()
     assert len(a.frames) == before + 1
 
 
@@ -182,13 +190,16 @@ async def a_new_panel_is_flipped_to_the_last_page() -> None:
     rec = Recorder()
     link = PanelLink(mux, rec.send, "t", pages=frozenset({11, 12, 13, 14}))
     await link.feed(p.frame(p.PacketType.DATA, data(C.COMMAND, b"\x00")))
+    await link.flushed()
     after = rec.frames[[i for i, f in enumerate(rec.frames)
                         if f[1] == data(C.COMMAND, b"\x1c")][0] + 1:]
     assert after == [(p.PacketType.DATA, data(C.DIGITAL, p.pack_digital(12, True))),
                      (p.PacketType.DATA, data(C.DIGITAL, p.pack_digital(12, False)))], after
     # Without page joins, or before any flip, nothing is sent.
     rec2 = Recorder()
-    await PanelLink(mux, rec2.send, "t").feed(p.frame(p.PacketType.DATA, data(C.COMMAND, b"\x00")))
+    link2 = PanelLink(mux, rec2.send, "t")
+    await link2.feed(p.frame(p.PacketType.DATA, data(C.COMMAND, b"\x00")))
+    await link2.flushed()
     assert rec2.frames[-1][1] == data(C.COMMAND, b"\x1c")
 
 
@@ -213,13 +224,75 @@ async def an_ipid_sent_extended_data_is_served_extended_data() -> None:
     link = PanelLink(mux, rec.send, "t")
     mux.links.add(link)
     await link.feed(p.frame(p.PacketType.DATA, data(C.COMMAND, b"\x00")))
+    await link.flushed()
     assert (p.PacketType.EXTENDED_DATA, room) in rec.frames, rec.frames
     assert (p.PacketType.DATA, data(C.DIGITAL, p.pack_digital(7, True))) in rec.frames
     before = len(rec.frames)
     change = bytes.fromhex("0000000a3400d203536f75726365")
     mux.from_processor(change, p.PacketType.EXTENDED_DATA)
-    await asyncio.sleep(0)
+    await link.flushed()
     assert rec.frames[before:] == [(p.PacketType.EXTENDED_DATA, change)], rec.frames[before:]
+
+
+class SlowRecorder(Recorder):
+    """A browser that takes its time over every frame."""
+
+    async def send(self, ptype, body):
+        await asyncio.sleep(0.001 if body[-1:] in (b"\x01", b"\x81") else 0)
+        self.frames.append((ptype, body))
+
+
+async def updates_arrive_in_the_order_the_processor_sent_them() -> None:
+    mux, _ = make_mux()
+    rec = SlowRecorder()
+    link = PanelLink(mux, rec.send, "t")
+    mux.links.add(link)
+    await link.feed(p.frame(p.PacketType.DATA, data(C.COMMAND, b"\x00")))
+    await link.flushed()
+    before = len(rec.frames)
+    # Join 2's frames are slow to send and join 3's quick: sent as separate
+    # tasks, 3 overtook 2. One writer keeps the processor's order.
+    changes = [data(C.DIGITAL, p.pack_digital(j, on)) for j, on in
+               ((2, True), (3, True), (2, False), (3, False))]
+    for change in changes:
+        mux.from_processor(change)
+    await link.flushed()
+    assert [b for _, b in rec.frames[before:]] == changes, rec.frames[before:]
+
+
+async def a_change_during_a_panels_load_is_not_lost() -> None:
+    mux, _ = make_mux()
+    rec = SlowRecorder()
+    link = PanelLink(mux, rec.send, "t")
+    mux.links.add(link)
+    loading = asyncio.ensure_future(
+        link.feed(p.frame(p.PacketType.DATA, data(C.COMMAND, b"\x00"))))
+    await asyncio.sleep(0)
+    # The processor moves while the panel is being sent its image.
+    change = data(C.DIGITAL, p.pack_digital(44, True))
+    mux.from_processor(change)
+    await loading
+    await link.flushed()
+    assert ("digital", 44, True, 0) in joins(rec.frames), "the change was lost"
+
+
+async def a_panel_that_stops_reading_is_closed_not_backlogged() -> None:
+    import crestron_cip.xpanel_mux as m
+    mux, _ = make_mux()
+
+    class Stuck(Recorder):
+        async def send(self, ptype, body):
+            await asyncio.sleep(3600)
+
+    rec = Stuck()
+    link = PanelLink(mux, rec.send, "t", close=rec.close)
+    link.ready = True
+    mux.links.add(link)
+    for i in range(m.PANEL_BACKLOG_MAX + 2):
+        mux.from_processor(data(C.DIGITAL, p.pack_digital(100 + i % 50, bool(i % 2))))
+    await asyncio.sleep(0)
+    assert rec.closed and not link.ready
+    link.stop()
 
 
 async def main() -> None:
@@ -230,7 +303,10 @@ async def main() -> None:
              losing_the_processor_closes_the_panels,
              a_serial_in_pieces_is_replayed_whole,
              a_new_panel_is_flipped_to_the_last_page,
-             an_ipid_sent_extended_data_is_served_extended_data]
+             an_ipid_sent_extended_data_is_served_extended_data,
+             updates_arrive_in_the_order_the_processor_sent_them,
+             a_change_during_a_panels_load_is_not_lost,
+             a_panel_that_stops_reading_is_closed_not_backlogged]
     for t in tests:
         await t()
         print(f"  ok  {t.__name__}")

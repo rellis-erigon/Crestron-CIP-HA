@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.24.0 — 2026-10-29
+
+- **Fixed**: updates to an open XPanel could arrive out of order. Each was
+  sent as its own task, so a slow frame could be overtaken by a later one
+  (a page pulse ahead of the joins it shows, a serial's pieces swapped).
+  Each panel now has one queue and one writer.
+- **Fixed**: a change the processor sent while a panel was loading was
+  lost, and the panel opened showing the state from before it. The image
+  is now queued and the panel marked ready in one step.
+- **Improved**: a browser that stops reading (a frozen tab, a phone asleep
+  mid-send) is closed after 5,000 waiting frames and reconnects to a fresh
+  image, instead of being sent an ever longer backlog.
+- **Improved**: a panel that fails to start (Home Assistant restarting, the
+  processor away) tries again by itself after 10 s, doubling to a minute,
+  rather than showing its error until the page is reloaded.
+- Home Assistant shutting down no longer logs every processor as lost.
+
 ## 0.23.2 — 2026-10-28
 
 - **Fixed**: "Configuration error" in place of the XPanel card on iPads and
