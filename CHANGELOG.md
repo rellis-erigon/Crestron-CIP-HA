@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.24.1 — 2026-10-30
+
+- **Fixed**: an XPanel stopped while its browser tab was hidden (another
+  tab, the window minimised) and was behind the real panel, or dropped by
+  the processor, when you came back. Panels now keep running in a hidden
+  tab.
+- **Fixed**: the panel jumped while the page scrolled. It was held fixed to
+  the window and moved after each scroll, a frame late; it now sits on the
+  page and scrolls with it.
+- **Improved**: a shown panel no longer restyles itself every frame, only
+  when its card moves or resizes, leaving those frames to the panel.
+- **Improved**: background panels start one after another instead of all
+  at once, so the first ones are ready sooner; a panel opened meanwhile
+  starts straight away.
+
 ## 0.24.0 — 2026-10-29
 
 - **Fixed**: updates to an open XPanel could arrive out of order. Each was
